@@ -152,7 +152,7 @@ CELERYBEAT_SCHEDULE = {
         'schedule': datetime.timedelta(minutes=1),
         'options': {'queue': 'beat_feeds_task'},
     },
-    # Add by Dapeng Jiang(jdpdyx@126.com)
+
     'net-monitor-task' : {
         'task': 'net-monitor-task',
         'schedule': datetime.timedelta(minutes=1),
@@ -213,6 +213,7 @@ CACHES = {
 REDIS_POOL               = redis.ConnectionPool(host=REDIS['host'], port=6379, db=0)
 REDIS_ANALYTICS_POOL     = redis.ConnectionPool(host=REDIS['host'], port=6379, db=2)
 REDIS_STATISTICS_POOL    = redis.ConnectionPool(host=REDIS['host'], port=6379, db=3)
+# REDIS_FEED_POOL数据库存放的是几个集合和队列(tasked_feeds, fetched_feeds_last_hour, scheduled_updates, queued_feeds)
 REDIS_FEED_POOL          = redis.ConnectionPool(host=REDIS['host'], port=6379, db=4)
 REDIS_SESSION_POOL       = redis.ConnectionPool(host=REDIS['host'], port=6379, db=5)
 REDIS_NETWORK_POOL       = redis.ConnectionPool(host=REDIS['host'], port=6379, db=6)

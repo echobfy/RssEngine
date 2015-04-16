@@ -4,7 +4,6 @@ from pyes.filters import RangeFilter
 from pyes.highlight import HighLighter
 from pyes.utils import ESRange
 from django.conf import settings
-# from django.contrib.auth.models import User
 from utils import log as logging
 
 # Add by Xinyan Lu : To support story search
@@ -15,11 +14,12 @@ class SearchStory:
     
     @classmethod
     def create_elasticsearch_mapping(cls):
+        # 新建SearchStory索引库，相当于create database操作
         cls.ES.create_index("%s-index" % cls.name)
         mapping = {
             'title': {
                 'boost': 2.0,
-                'index': 'analyzed',
+                'index': 'analyzed',    #使用分词器
                 'store': 'yes',
                 'type': 'string',
                 "term_vector" : "with_positions_offsets"
@@ -54,13 +54,6 @@ class SearchStory:
                 'store': 'yes',
                 'type': 'boolean',
             },
-            # Modified by Xinyan Lu : No user id
-            # 'user_ids': {
-            #     'index': 'not_analyzed',
-            #     'store': 'yes',
-            #     'type': 'integer',
-            #     'index_name': 'user_id'
-            # }
         }
         cls.ES.put_mapping("%s-type" % cls.name, {'properties': mapping}, ["%s-index" % cls.name])
         
@@ -71,7 +64,6 @@ class SearchStory:
             "title": story_title,
             "author": story_author,
             "date": story_date,
-            # "user_ids": user_id,
             "db_id": db_id,
             "frozen": frozen,
         }
@@ -79,16 +71,15 @@ class SearchStory:
         
     @classmethod
     def query(cls, text):
-        # user = User.objects.get(pk=user_id)
-        text=text.strip()
+        text = text.strip()
         cls.ES.refresh()
         q = StringQuery(text)
         highlighter = HighLighter(['<em>'],['</em>'])
         # highlighter = HighLighter()
-        s = Search(q,highlight=highlighter)
+        s = Search(q, highlight=highlighter)
         s.add_highlight('title')
         s.add_highlight('content')
-        results = cls.ES.search(s,indices=['%s-index' % cls.name])
+        results = cls.ES.search(s, indices=['%s-index' % cls.name])
         # logging.user(user, "~FGSearch ~FCsaved stories~FG for: ~SB%s" % text)
         
         if not results.total:

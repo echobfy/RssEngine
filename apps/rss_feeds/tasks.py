@@ -6,7 +6,6 @@ import redis
 from celery.task import Task
 from utils import log as logging
 from utils.net_monitor import NetworkMonitor
-#from utils import s3_utils as s3 #---commented by songjun
 from django.conf import settings
 import sys
 import traceback
@@ -20,6 +19,11 @@ class NetMonitorTask(Task):
         NetworkMonitor.test()
         logging.debug("%s [MonitorTask] finish" % (time.strftime("%Y-%m-%d %H:%M:%S")))
 
+# tasked_feeds（有序集合）：存储的是已经将任务分发出去，但是还未执行完成的feed_id
+# fetched_feeds_last_hour（有序集合）：存储的是相对于现在过去一小时已经抓过的feed_id，与现在相比一小时之内的还在该集合内
+# scheduled_updates（有序集合）：存储的是将要调度来抓取的feed_id
+# queued_feeds（集合）：存储是正常排队的feed_id，将要做成task分发出去
+
 
 class TaskFeeds(Task):
     name = 'task-feeds'
@@ -31,32 +35,39 @@ class TaskFeeds(Task):
             now = datetime.datetime.utcnow()
             start = time.time()
             r = redis.Redis(connection_pool=settings.REDIS_FEED_POOL)
+
+            # 得到tasked_feeds（有序集合）中的个数
             tasked_feeds_size = r.zcard('tasked_feeds')
 
             hour_ago = now - datetime.timedelta(hours=1)
+            # 移除一小时之前抓过的feed_id，一小时之内抓过的还在此集合内
             r.zremrangebyscore('fetched_feeds_last_hour', 0, int(hour_ago.strftime('%s')))
 
+            # 获得scheduled_updates中到目前为止所以的feed_id，并删除
             now_timestamp = int(now.strftime("%s"))
             queued_feeds = r.zrangebyscore('scheduled_updates', 0, now_timestamp)
-            print len(queued_feeds)
             r.zremrangebyscore('scheduled_updates', 0, now_timestamp)
-            logging.debug(" ---> ~SN~FBQueuing ~SB%s~SN stale feeds (~SB%s~SN/~FG%s~FB~SN/%s tasked/queued/scheduled)" % (
-                            len(queued_feeds),
-                            r.zcard('tasked_feeds'),
-                            r.scard('queued_feeds'),
-                            r.zcard('scheduled_updates')))
-            print len(queued_feeds)
-            if len(queued_feeds)>0:
-                r.sadd('queued_feeds', *queued_feeds)
+
             logging.debug(" ---> ~SN~FBQueuing ~SB%s~SN stale feeds (~SB%s~SN/~FG%s~FB~SN/%s tasked/queued/scheduled)" % (
                             len(queued_feeds),
                             r.zcard('tasked_feeds'),
                             r.scard('queued_feeds'),
                             r.zcard('scheduled_updates')))
 
-            # Regular feeds
+            # 从可以调度的队列中获取全部的feed_id，扔到排队队列中
+            if len(queued_feeds)>0:
+                r.sadd('queued_feeds', *queued_feeds)
+
+            logging.debug(" ---> ~SN~FBQueuing ~SB%s~SN stale feeds (~SB%s~SN/~FG%s~FB~SN/%s tasked/queued/scheduled)" % (
+                            len(queued_feeds),
+                            r.zcard('tasked_feeds'),
+                            r.scard('queued_feeds'),
+                            r.zcard('scheduled_updates')))
+
+            # 如果已经分发出去的任务个数小于5000，就从排队的queued_feeds中获取至多5000的feed_id，拿去
             if tasked_feeds_size < 5000:
                 feeds = r.srandmember('queued_feeds',5000)
+                # 该函数会将feeds中的id从queued_feeds中删除，然后添加到tasked_feeds中，再制作成任务分发出去
                 Feed.task_feeds(feeds, verbose=True)
                 active_count = len(feeds)
             else:
@@ -148,6 +159,7 @@ class UpdateFeeds(Task):
 
             for feed_pk in feed_pks:
                 feed = Feed.get_by_id(feed_pk)
+                # 如果该feed_id的feed被删除，或者该feed的pk被修改
                 if not feed or feed.pk != int(feed_pk):
                     logging.info(" ---> ~FRRemoving feed_id %s from tasked_feeds queue, points to %s..." % (feed_pk, feed and feed.pk))
                     r.zrem('tasked_feeds', feed_pk)
@@ -220,38 +232,6 @@ class PushFeeds(Task):
         feed = Feed.get_by_id(feed_id)
         if feed:
             feed.update(options=options)
-# class BackupMongo commented by songjun
-'''
-class BackupMongo(Task):
-    name = 'backup-mongo'
-    max_retries = 0
-    ignore_result = True
-
-    def run(self, **kwargs):
-        COLLECTIONS = "classifier_tag classifier_author classifier_feed classifier_title userstories starred_stories shared_stories category category_site sent_emails social_profile social_subscription social_services statistics feedback"
-
-        date = time.strftime('%Y-%m-%d-%H-%M')
-        collections = COLLECTIONS.split(' ')
-        db_name = 'newsblur'
-        dir_name = 'backup_mongo_%s' % date
-        filename = '%s.tgz' % dir_name
-
-        os.mkdir(dir_name)
-
-        for collection in collections:
-            cmd = 'mongodump  --db %s --collection %s -o %s' % (db_name, collection, dir_name)
-            logging.debug(' ---> ~FMDumping ~SB%s~SN: %s' % (collection, cmd))
-            os.system(cmd)
-
-        cmd = 'tar -jcf %s %s' % (filename, dir_name)
-        os.system(cmd)
-
-        logging.debug(' ---> ~FRUploading ~SB~FM%s~SN~FR to S3...' % filename)
-        s3.save_file_in_s3(filename)
-        shutil.rmtree(dir_name)
-        os.remove(filename)
-        logging.debug(' ---> ~FRFinished uploading ~SB~FM%s~SN~FR to S3.' % filename)
-'''
 
 class ScheduleImmediateFetches(Task):
 

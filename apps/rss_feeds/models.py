@@ -14,13 +14,11 @@ from collections import defaultdict
 from operator import itemgetter
 from bson.objectid import ObjectId
 from BeautifulSoup import BeautifulSoup
-# from nltk.collocations import TrigramCollocationFinder, BigramCollocationFinder, TrigramAssocMeasures, BigramAssocMeasures
 from django.db import models
 from django.db import IntegrityError
 from django.conf import settings
 from django.db.models.query import QuerySet
 from django.core.urlresolvers import reverse
-# from django.contrib.auth.models import User
 from django.contrib.sites.models import Site
 from django.template.defaultfilters import slugify
 from mongoengine.queryset import OperationError, Q, NotUniqueError
@@ -28,29 +26,21 @@ from mongoengine.base import ValidationError
 from vendor.timezones.utilities import localtime_for_timezone
 from apps.rss_feeds.tasks import UpdateFeeds, PushFeeds
 from apps.rss_feeds.text_importer import TextImporter
-# from apps.search.models import SearchStarredStory, SearchFeed
-# from apps.statistics.rstats import RStats
-# from utils import json_functions as json
 from utils import feedfinder, feedparser
 from utils import urlnorm
 from utils import log as logging
-# from utils.fields import AutoOneToOneField
 from utils.feed_functions import levenshtein_distance
 from utils.feed_functions import timelimit, TimeoutError
 from utils.feed_functions import relative_timesince
 from utils.feed_functions import seconds_timesince
 from utils.story_functions import strip_tags, htmldiff, strip_comments, strip_comments__lxml
 import pytz
-# from vendor.haystack.query import SearchQuerySet
 from apps.search.models import SearchStory
 from fdfs_client.client import Fdfs_client,DataError
 from PIL import Image
 import cStringIO
 import urllib2
 import traceback
-# import gevent
-# from gevent import monkey
-# monkey.patch_all()  # gevent monkey patch
 from django.core.mail import mail_admins
 from utils.image_url_filters import IMAGE_BLACKLIST_FILTERS
 
@@ -88,12 +78,12 @@ class Feed(models.Model):
     has_page_exception = models.BooleanField(default=False, db_index=True)
     has_page = models.BooleanField(default=True)
     exception_code = models.IntegerField(default=0)
-    errors_since_good = models.IntegerField(default=0)
+    errors_since_good = models.IntegerField(default=0)              #errors_since_good表示自从上次成功抓取以来，已经发生错误多少次，如果成功就为0
     min_to_decay = models.IntegerField(default=0)
     days_to_trim = models.IntegerField(default=90)
     creation = models.DateField(auto_now_add=True)
-    etag = models.CharField(max_length=255, blank=True, null=True)
-    last_modified = models.DateTimeField(null=True, blank=True)
+    etag = models.CharField(max_length=255, blank=True, null=True)  # etag表示资源实体，再次请求时与请求一起发送，如果不变则不返回实体
+    last_modified = models.DateTimeField(null=True, blank=True)     # 与etag作用类似，标记文件最后一次改动的时间，节省流量。
     stories_last_month = models.IntegerField(default=0)
     average_stories_per_month = models.IntegerField(default=0)
     last_load_time = models.IntegerField(default=0)
@@ -355,12 +345,6 @@ class Feed(models.Model):
             feed = cls.objects.filter(
                 branch_from_feed=None
             ).filter(**criteria('feed_address', address)).order_by('-num_subscribers')
-            # Deleted by Xinyan Lu : No DuplicateFeed currently
-            # if not feed:
-            #     duplicate_feed = DuplicateFeed.objects.filter(
-            #         **criteria('duplicate_address', address))
-            #     if duplicate_feed and len(duplicate_feed) > offset:
-            #         feed = [duplicate_feed[offset].feed]
             if not feed and aggressive:
                 feed = cls.objects.filter(
                     branch_from_feed=None
@@ -421,6 +405,7 @@ class Feed(models.Model):
         if isinstance(feeds, QuerySet):
             feeds = [f.pk for f in feeds]
 
+        # 从queued_feeds中删除feeds，扔到tasked_feeds中，并制作成task分发出去
         r.srem('queued_feeds', *feeds)
         now = datetime.datetime.now().strftime("%s")
         p = r.pipeline()
@@ -428,8 +413,6 @@ class Feed(models.Model):
             p.zadd('tasked_feeds', feed_id, now)
         p.execute()
 
-        # for feed_ids in (feeds[pos:pos + queue_size] for pos in xrange(0,
-        # len(feeds), queue_size)):
         for feed_id in feeds:
             UpdateFeeds.apply_async(args=(feed_id,), queue='update_feeds')
 
@@ -552,11 +535,13 @@ class Feed(models.Model):
                                           message=message,
                                           exception=exception)
 
+        # 如果状态不是200，或者304的话，那么说明出错了
         if status_code not in (200, 304):
             self.errors_since_good += 1
             self.count_errors_in_history(
                 'feed', status_code, fetch_history=fetch_history)
             self.set_next_scheduled_update()
+        # 如果当前feed_id成功抓取了，那么修改errors_since_good等参数
         elif self.has_feed_exception or self.errors_since_good:
             self.errors_since_good = 0
             self.has_feed_exception = False
@@ -907,8 +892,10 @@ class Feed(models.Model):
         if feed:
             feed = Feed.get_by_id(feed.pk)
         if feed:
+            # 当前feed_id抓完之后，更新last_update（最后修改时间），并设置下一次需要调度更新的时间
             feed.last_update = datetime.datetime.utcnow()
             feed.set_next_scheduled_update()
+            # 将抓完的feed_id放入到fetched_feeds_last_hour中，说明过去一小时内抓过
             r.zadd('fetched_feeds_last_hour', feed.pk,
                    int(datetime.datetime.now().strftime('%s')))
 
@@ -918,6 +905,7 @@ class Feed(models.Model):
                 original_feed_id)
             r.zrem('tasked_feeds', original_feed_id)
             r.zrem('error_feeds', original_feed_id)
+        # 任务做完之后，将其从tasked_feeds中删除
         if feed:
             r.zrem('tasked_feeds', feed.pk)
             r.zrem('error_feeds', feed.pk)
@@ -931,18 +919,6 @@ class Feed(models.Model):
             return feed
         except Feed.DoesNotExist:
             raise Feed.DoesNotExist
-            # Feed has been merged after updating. Find the right feed.
-
-            # Deleted by Xinyan Lu : No DuplicateFeed currently
-            # duplicate_feeds = DuplicateFeed.objects.filter(
-            #     duplicate_feed_id=feed_id)
-            # if duplicate_feeds:
-            #     return duplicate_feeds[0].feed
-            # if feed_address:
-            #     duplicate_feeds = DuplicateFeed.objects.filter(
-            #         duplicate_address=feed_address)
-            #     if duplicate_feeds:
-            #         return duplicate_feeds[0].feed
 
     @classmethod
     def get_by_name(cls, query, limit=1):
@@ -1693,29 +1669,6 @@ class Feed(models.Model):
 #             if hasattr(self, 'id') and self.id: self.delete()
 
 
-class MFeedIcon(mongo.Document):
-    feed_id = mongo.IntField(primary_key=True)
-    color = mongo.StringField(max_length=6)
-    data = mongo.StringField()
-    icon_url = mongo.StringField()
-    not_found = mongo.BooleanField(default=False)
-
-    meta = {
-        'collection': 'feed_icons',
-        'allow_inheritance': False,
-    }
-
-    def save(self, *args, **kwargs):
-        if self.icon_url:
-            self.icon_url = unicode(self.icon_url)
-        try:
-            return super(MFeedIcon, self).save(*args, **kwargs)
-        except (IntegrityError, OperationError):
-            # print "Error on Icon: %s" % e
-            if hasattr(self, '_id'):
-                self.delete()
-
-
 class MFeedPage(mongo.Document):
     feed_id = mongo.IntField(primary_key=True)
     page_data = mongo.BinaryField()
@@ -1743,16 +1696,6 @@ class MFeedPage(mongo.Document):
             page_data_z = feed_page[0].page_data
             if page_data_z:
                 data = zlib.decompress(page_data_z)
-        # Deleted By Xinyan Lu : No DuplicateFeed currently
-        # if not data:
-        #     dupe_feed = DuplicateFeed.objects.filter(duplicate_feed_id=feed_id)
-        #     if dupe_feed:
-        #         feed = dupe_feed[0].feed
-        #         feed_page = MFeedPage.objects.filter(feed_id=feed.pk)
-        #         if feed_page:
-        #             page_data_z = feed_page[0].page_data
-        #             if page_data_z:
-        #                 data = zlib.decompress(feed_page[0].page_data)
 
         return data
 
@@ -2416,45 +2359,6 @@ class MStarredStory(mongo.Document):
 
         return stories
 
-    # Deleted by Xinyan Lu : No users
-    # @classmethod
-    # def trim_old_stories(cls, stories=10, days=30, dryrun=False):
-    #     print " ---> Fetching starred story counts..."
-    #     stats = settings.MONGODB.newsblur.starred_stories.aggregate([{
-    #         "$group": {
-    #             "_id":      "$user_id",
-    #             "stories":  {"$sum": 1},
-    #         },
-    #     }, {
-    #         "$match": {
-    #             "stories": {"$gte": stories}
-    #         },
-    #     }])
-    #     month_ago = datetime.datetime.now() - datetime.timedelta(days=days)
-    #     user_ids = stats['result']
-    #     user_ids = sorted(user_ids, key=lambda x: x['stories'], reverse=True)
-    #     print " ---> Found %s users with more than %s starred stories" % (len(user_ids), stories)
-
-    #     total = 0
-    #     for stat in user_ids:
-    #         try:
-    #             user = User.objects.select_related(
-    #                 'profile').get(pk=stat['_id'])
-    #         except User.DoesNotExist:
-    #             user = None
-
-    #         if user and (user.profile.is_premium or user.profile.last_seen_on > month_ago):
-    #             continue
-
-    #         total += stat['stories']
-    #         print " ---> %20.20s: %-20.20s %s stories" % (user and user.profile.last_seen_on or "Deleted",
-    #                                                       user and user.username or " - ",
-    #                                                       stat['stories'])
-    #         if not dryrun and stat['_id']:
-    #             cls.objects.filter(user_id=stat['_id']).delete()
-
-    #     print " ---> Deleted %s stories in total." % total
-
     @property
     def guid_hash(self):
         return hashlib.sha1(self.story_guid).hexdigest()[:6]
@@ -2476,6 +2380,7 @@ class MStarredStory(mongo.Document):
             original_text = zlib.decompress(original_text_z)
 
         return original_text
+
 
 
 class MFetchHistory(mongo.Document):
@@ -2553,131 +2458,6 @@ class MFetchHistory(mongo.Document):
             # RStats.add('feed_fetch')
 
         return cls.feed(feed_id, fetch_history=fetch_history)
-
-# Deleted By Xinyan Lu : No DuplicateFeed currently.
-# !!!should be added back
-# class DuplicateFeed(models.Model):
-#     duplicate_address = models.CharField(max_length=764, db_index=True)
-#     duplicate_link = models.CharField(max_length=764, null=True, db_index=True)
-#     duplicate_feed_id = models.CharField(
-#         max_length=255, null=True, db_index=True)
-#     feed = models.ForeignKey(Feed, related_name='duplicate_addresses')
-
-#     def __unicode__(self):
-#         return "%s: %s / %s" % (self.feed, self.duplicate_address, self.duplicate_link)
-
-#     def canonical(self):
-#         return {
-#             'duplicate_address': self.duplicate_address,
-#             'duplicate_link': self.duplicate_link,
-#             'duplicate_feed_id': self.duplicate_feed_id,
-#             'feed_id': self.feed_id
-#         }
-
-#     def save(self, *args, **kwargs):
-#         max_address = DuplicateFeed._meta.get_field(
-#             'duplicate_address').max_length
-#         if len(self.duplicate_address) > max_address:
-#             self.duplicate_address = self.duplicate_address[:max_address]
-#         max_link = DuplicateFeed._meta.get_field('duplicate_link').max_length
-#         if self.duplicate_link and len(self.duplicate_link) > max_link:
-#             self.duplicate_link = self.duplicate_link[:max_link]
-
-#         super(DuplicateFeed, self).save(*args, **kwargs)
-
-
-# def merge_feeds(original_feed_id, duplicate_feed_id, force=False):
-#     from apps.reader.models import UserSubscription
-#     from apps.social.models import MSharedStory
-
-#     if original_feed_id == duplicate_feed_id:
-#         logging.info(" ***> Merging the same feed. Ignoring...")
-#         return original_feed_id
-#     try:
-#         original_feed = Feed.objects.get(pk=original_feed_id)
-#         duplicate_feed = Feed.objects.get(pk=duplicate_feed_id)
-#     except Feed.DoesNotExist:
-#         logging.info(" ***> Already deleted feed: %s" % duplicate_feed_id)
-#         return original_feed_id
-
-#     heavier_dupe = original_feed.num_subscribers < duplicate_feed.num_subscribers
-#     branched_original = original_feed.branch_from_feed
-#     if (heavier_dupe or branched_original) and not force:
-#         original_feed, duplicate_feed = duplicate_feed, original_feed
-#         original_feed_id, duplicate_feed_id = duplicate_feed_id, original_feed_id
-#         if branched_original:
-#             original_feed.feed_address = duplicate_feed.feed_address
-
-#     logging.info(
-#         " ---> Feed: [%s - %s] %s - %s" % (original_feed_id, duplicate_feed_id,
-#                                            original_feed, original_feed.feed_link))
-#     logging.info(
-#         "            Orig ++> %s: (%s subs) %s / %s %s" % (original_feed.pk,
-#                                                            original_feed.num_subscribers,
-#                                                            original_feed.feed_address,
-#                                                            original_feed.feed_link,
-#                                                            " [B: %s]" % original_feed.branch_from_feed.pk if original_feed.branch_from_feed else ""))
-#     logging.info(
-#         "            Dupe --> %s: (%s subs) %s / %s %s" % (duplicate_feed.pk,
-#                                                            duplicate_feed.num_subscribers,
-#                                                            duplicate_feed.feed_address,
-#                                                            duplicate_feed.feed_link,
-#                                                            " [B: %s]" % duplicate_feed.branch_from_feed.pk if duplicate_feed.branch_from_feed else ""))
-
-#     original_feed.branch_from_feed = None
-
-#     user_subs = UserSubscription.objects.filter(
-#         feed=duplicate_feed).order_by('-pk')
-#     for user_sub in user_subs:
-#         user_sub.switch_feed(original_feed, duplicate_feed)
-
-#     def delete_story_feed(model, feed_field='feed_id'):
-#         duplicate_stories = model.objects(**{feed_field: duplicate_feed.pk})
-#         # if duplicate_stories.count():
-#         #     logging.info(" ---> Deleting %s %s" % (duplicate_stories.count(), model))
-#         duplicate_stories.delete()
-
-#     delete_story_feed(MStory, 'story_feed_id')
-#     delete_story_feed(MFeedPage, 'feed_id')
-
-#     try:
-#         DuplicateFeed.objects.create(
-#             duplicate_address=duplicate_feed.feed_address,
-#             duplicate_link=duplicate_feed.feed_link,
-#             duplicate_feed_id=duplicate_feed.pk,
-#             feed=original_feed
-#         )
-#     except (IntegrityError, OperationError), e:
-#         logging.info(" ***> Could not save DuplicateFeed: %s" % e)
-
-#     # Switch this dupe feed's dupe feeds over to the new original.
-#     duplicate_feeds_duplicate_feeds = DuplicateFeed.objects.filter(
-#         feed=duplicate_feed)
-#     for dupe_feed in duplicate_feeds_duplicate_feeds:
-#         dupe_feed.feed = original_feed
-#         dupe_feed.duplicate_feed_id = duplicate_feed.pk
-#         dupe_feed.save()
-
-#     logging.debug(
-#         ' ---> Dupe subscribers (%s): %s, Original subscribers (%s): %s' %
-#         (duplicate_feed.pk, duplicate_feed.num_subscribers,
-#          original_feed.pk, original_feed.num_subscribers))
-#     if duplicate_feed.pk != original_feed.pk:
-#         duplicate_feed.delete()
-#     else:
-#         logging.debug(
-#             " ***> Duplicate feed is the same as original feed. Panic!")
-#     logging.debug(' ---> Deleted duplicate feed: %s/%s' %
-#                   (duplicate_feed, duplicate_feed_id))
-#     original_feed.branch_from_feed = None
-#     original_feed.count_subscribers()
-#     original_feed.save()
-#     logging.debug(' ---> Now original subscribers: %s' %
-#                   (original_feed.num_subscribers))
-
-#     MSharedStory.switch_feed(original_feed_id, duplicate_feed_id)
-
-#     return original_feed_id
 
 
 def rewrite_folders(folders, original_feed, duplicate_feed):

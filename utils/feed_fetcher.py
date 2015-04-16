@@ -10,22 +10,15 @@ import pymongo
 from django.conf import settings
 from django.db import IntegrityError
 from django.core.cache import cache
-# from apps.reader.models import UserSubscription
 from apps.rss_feeds.models import Feed, MStory
 from apps.rss_feeds.page_importer import PageImporter
 from apps.rss_feeds.icon_importer import IconImporter
-# from apps.push.models import PushSubscription
 from apps.statistics.models import MAnalyticsFetcher
 from utils import feedparser
-# from utils import feedparser_trunk as feedparser
 from utils.story_functions import pre_process_story, strip_tags
 from utils import log as logging
 from utils.feed_functions import timelimit, TimeoutError, utf8encode, cache_bust_url
-# from utils.feed_functions import mail_feed_error_to_admin
 
-
-# Refresh feed code adapted from Feedjack.
-# http://feedjack.googlecode.com
 
 FEED_OK, FEED_SAME, FEED_ERRPARSE, FEED_ERRHTTP, FEED_ERREXC = range(5)
 
@@ -34,7 +27,8 @@ def mtime(ttime):
     """
     return datetime.datetime.fromtimestamp(time.mktime(ttime))
     
-    
+
+# 根据feed_address 去抓取页面返回一个字典类型
 class FetchFeed:
     def __init__(self, feed_id, options):
         self.feed = Feed.get_by_id(feed_id)
@@ -54,7 +48,7 @@ class FetchFeed:
                                                             datetime.datetime.now() - self.feed.last_update)
         logging.debug(log_msg)
                                                  
-        etag=self.feed.etag
+        etag = self.feed.etag
         modified = self.feed.last_modified.utctimetuple()[:7] if self.feed.last_modified else None
         address = self.feed.feed_address
         
@@ -109,6 +103,7 @@ class FetchFeed:
             identity = current_process._identity[0]
 
         return identity
+
         
 class ProcessFeed:
     def __init__(self, feed_id, fpf, options):
@@ -140,7 +135,7 @@ class ProcessFeed:
                                   self.fpf.bozo_exception,
                                   len(self.fpf.entries)))
                     
-            if self.fpf.status == 304:
+            if self.fpf.status == 304: # 304代表资源未发生变化
                 self.feed = self.feed.save()
                 self.feed.save_feed_history(304, "Not modified")
                 return FEED_SAME, ret_values
@@ -213,11 +208,7 @@ class ProcessFeed:
         
         if self.fpf.feed.get('title'):
             self.feed.feed_title = strip_tags(self.fpf.feed.get('title'))
-        # Deleted by Xinyan Lu : No this table
-        # tagline = self.fpf.feed.get('tagline', self.feed.data.feed_tagline)
-        # if tagline:
-        #     self.feed.data.feed_tagline = utf8encode(tagline)
-        #     self.feed.data.save()
+
         if not self.feed.feed_link_locked:
             self.feed.feed_link = self.fpf.feed.get('link') or self.fpf.feed.get('id') or self.feed.feed_link
         
@@ -363,7 +354,8 @@ class Dispatcher:
                         feed.num_subscribers,
                         rand, quick))
                     continue
-                    
+                
+                # 创建FetchFeed类（在本文件中）
                 ffeed = FetchFeed(feed_id, self.options)
                 ret_feed, fetched_feed = ffeed.fetch()
                 feed_fetch_duration = time.time() - start_duration
@@ -531,34 +523,6 @@ class Dispatcher:
         
     def count_unreads_for_subscribers(self, feed):
         return
-        # Deleted by Xinyan Lu : No user unreads
-        # UNREAD_CUTOFF = datetime.datetime.utcnow() - datetime.timedelta(days=settings.DAYS_OF_UNREAD)
-        # user_subs = UserSubscription.objects.filter(feed=feed, 
-        #                                             active=True,
-        #                                             user__profile__last_seen_on__gte=UNREAD_CUTOFF)\
-        #                                     .order_by('-last_read_date')
-        
-        # if not user_subs.count():
-        #     return
-            
-        # for sub in user_subs:
-        #     if not sub.needs_unread_recalc:
-        #         sub.needs_unread_recalc = True
-        #         sub.save()
-
-        # if self.options['compute_scores']:
-        #     stories = MStory.objects(story_feed_id=feed.pk,
-        #                              story_date__gte=UNREAD_CUTOFF)\
-        #                     .read_preference(pymongo.ReadPreference.PRIMARY)
-        #     stories = Feed.format_stories(stories, feed.pk)
-        #     cache.set("S:%s" % feed.pk, stories, 60)
-        #     logging.debug(u'   ---> [%-30s] ~FYComputing scores: ~SB%s stories~SN with ~SB%s subscribers ~SN(%s/%s/%s)' % (
-        #                   feed.title[:30], len(stories), user_subs.count(),
-        #                   feed.num_subscribers, feed.active_subscribers, feed.premium_subscribers))        
-        #     self.calculate_feed_scores_with_stories(user_subs, stories)
-        # elif self.options.get('mongodb_replication_lag'):
-        #     logging.debug(u'   ---> [%-30s] ~BR~FYSkipping computing scores: ~SB%s seconds~SN of mongodb lag' % (
-        #       feed.title[:30], self.options.get('mongodb_replication_lag')))
     
     @timelimit(10)
     def calculate_feed_scores_with_stories(self, user_subs, stories):

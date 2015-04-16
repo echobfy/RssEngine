@@ -54,8 +54,9 @@ class PageImporter(object):
             ),
             'Connection': 'close',
         }
-    
-    @timelimit(15)
+
+    # 从feed_link中获得html界面
+    @timelimit(15) #urllib_fallback=False表示使用requests包
     def fetch_page(self, urllib_fallback=False, requests_exception=None):
         html = None
         feed_link = self.feed.feed_link
@@ -183,66 +184,3 @@ class PageImporter(object):
         ret.append(document[last_end:])
         
         return ''.join(ret)
-        
-    def save_page(self, html):
-        saved = False
-        
-        if not html or len(html) < 100:
-            return
-        
-        if settings.BACKED_BY_AWS.get('pages_on_node'):
-            saved = self.save_page_node(html)
-            if saved and self.feed.s3_page and settings.BACKED_BY_AWS.get('pages_on_s3'):
-                self.delete_page_s3()
-            
-        if settings.BACKED_BY_AWS.get('pages_on_s3') and not saved:
-            saved = self.save_page_s3(html)
-        if not saved:
-            try:
-                feed_page = MFeedPage.objects.get(feed_id=self.feed.pk)
-                feed_page.page_data = html
-                feed_page.save()
-            except MFeedPage.DoesNotExist:
-                feed_page = MFeedPage.objects.create(feed_id=self.feed.pk, page_data=html)
-            return feed_page
-    
-    def save_page_node(self, html):
-        url = "http://%s/original_page/%s" % (
-            settings.ORIGINAL_PAGE_SERVER,
-            self.feed.pk,
-        )
-        response = requests.post(url, files={
-            'original_page': compress_string(html),
-        })
-        if response.status_code == 200:
-            return True
-    
-    def save_page_s3(self, html):
-        k = Key(settings.S3_PAGES_BUCKET)
-        k.key = self.feed.s3_pages_key
-        k.set_metadata('Content-Encoding', 'gzip')
-        k.set_metadata('Content-Type', 'text/html')
-        k.set_metadata('Access-Control-Allow-Origin', '*')
-        k.set_contents_from_string(compress_string(html))
-        k.set_acl('public-read')
-        
-        try:
-            feed_page = MFeedPage.objects.get(feed_id=self.feed.pk)
-            feed_page.delete()
-            logging.debug('   ---> [%-30s] ~FYTransfering page data to S3...' % (self.feed))
-        except MFeedPage.DoesNotExist:
-            pass
-            
-        if not self.feed.s3_page:
-            self.feed.s3_page = True
-            self.feed.save()
-        
-        return True
-    
-    def delete_page_s3(self):
-        k = Key(settings.S3_PAGES_BUCKET)
-        k.key = self.feed.s3_pages_key
-        k.delete()
-        
-        self.feed.s3_page = False
-        self.feed.save()

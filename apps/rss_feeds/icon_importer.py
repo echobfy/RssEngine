@@ -83,19 +83,6 @@ class IconImporter(object):
             
         self.feed.save()
         return not self.feed.favicon_not_found
-
-    # Deleted By Xinyan Lu : No S3 storage
-    # def save_to_s3(self, image_str):
-    #     expires = datetime.datetime.now() + datetime.timedelta(days=60)
-    #     expires = expires.strftime("%a, %d %b %Y %H:%M:%S GMT")
-    #     k = Key(settings.S3_ICONS_BUCKET)
-    #     k.key = self.feed.s3_icons_key
-    #     k.set_metadata('Content-Type', 'image/png')
-    #     k.set_metadata('Expires', expires)
-    #     k.set_contents_from_string(image_str.decode('base64'))
-    #     k.set_acl('public-read')
-        
-    #     self.feed.s3_icon = True
         
     def load_icon(self, image_file, index=None):
         '''
