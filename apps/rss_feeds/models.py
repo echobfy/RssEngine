@@ -118,6 +118,14 @@ class Feed(models.Model):
     def permalink(self):
         return "%s/site/%s/%s" % (settings.NEWSBLUR_URL, self.pk, slugify(self.feed_title.lower()[:50]))
 
+    @property
+    def error_count(self):
+        r = redis.Redis(connection_pool=settings.REDIS_FEED_POOL)
+        fetch_errors = int(r.zscore('error_feeds', self.pk) or 0)
+
+        return fetch_errors + self.errors_since_good
+
+
     def canonical(self, full=False):
         feed = {
             'id': self.pk,
@@ -213,6 +221,24 @@ class Feed(models.Model):
                              address=self.feed_address,
                              link=self.feed_link,
                              num_subscribers=self.num_subscribers)
+
+    @classmethod
+    def get_by_id(cls, feed_id, feed_address=None):
+        try:
+            feed = Feed.objects.get(pk=feed_id)
+            return feed
+        except Feed.DoesNotExist:
+            raise Feed.DoesNotExist
+
+    @classmethod
+    def get_by_name(cls, query, limit=1):
+        results = SearchFeed.query(query)
+        feed_ids = [result.feed_id for result in results]
+
+        if limit == 1:
+            return Feed.get_by_id(feed_ids[0])
+        else:
+            return [Feed.get_by_id(f) for f in feed_ids][:limit]
 
     @classmethod
     def autocomplete(self, prefix, limit=5):
@@ -563,7 +589,7 @@ class Feed(models.Model):
                                           message=message,
                                           exception=exception)
 
-        # 如果状态不是200，或者304的话，那么说明出错了
+        # if the status_code is not 200 or 304, it means it is wrong
         if status_code not in (200, 304):
             self.errors_since_good += 1
             self.count_errors_in_history(
@@ -598,10 +624,8 @@ class Feed(models.Model):
         if not fetch_history:
             fetch_history = MFetchHistory.feed(self.pk)
         fh = fetch_history[exception_type + '_fetch_history']
-        non_errors = [h for h in fh if h['status_code']
-                      and int(h['status_code']) in (200, 304)]
-        errors = [h for h in fh if h['status_code']
-                  and int(h['status_code']) not in (200, 304)]
+        non_errors = [h for h in fh if h['status_code'] and int(h['status_code'])     in (200, 304)]
+        errors     = [h for h in fh if h['status_code'] and int(h['status_code']) not in (200, 304)]
 
         if len(non_errors) == 0 and len(errors) > 1:
             self.active = True
@@ -677,23 +701,6 @@ class Feed(models.Model):
 
         return feed
 
-    @classmethod
-    def get_by_id(cls, feed_id, feed_address=None):
-        try:
-            feed = Feed.objects.get(pk=feed_id)
-            return feed
-        except Feed.DoesNotExist:
-            raise Feed.DoesNotExist
-
-    @classmethod
-    def get_by_name(cls, query, limit=1):
-        results = SearchFeed.query(query)
-        feed_ids = [result.feed_id for result in results]
-
-        if limit == 1:
-            return Feed.get_by_id(feed_ids[0])
-        else:
-            return [Feed.get_by_id(f) for f in feed_ids][:limit]
 
     # 
     def add_update_stories(self, stories, existing_stories, verbose=False):
@@ -906,27 +913,8 @@ class Feed(models.Model):
 
         return cutoff
 
-    def trim_feed(self, verbose=False, cutoff=None):
-        # Add by XY: No need to trim feed, we need all feed stories, so just do nothing
-        return
-        if not cutoff:
-            cutoff = self.story_cutoff
-        MStory.trim_feed(feed=self, cutoff=cutoff, verbose=verbose)
-
     def freeze_feed(self,verbose=True):
         MStory.freeze_feed(feed=self,verbose=verbose)
-
-    # @staticmethod
-    # def clean_invalid_ids():
-    #     history = MFeedFetchHistory.objects(status_code=500, exception__contains='InvalidId:')
-    #     urls = set()
-    #     for h in history:
-    #         u = re.split('InvalidId: (.*?) is not a valid ObjectId\\n$', h.exception)[1]
-    #         urls.add((h.feed_id, u))
-    #
-    #     for f, u in urls:
-    # print "db.stories.remove({\"story_feed_id\": %s, \"_id\": \"%s\"})" %
-    # (f, u)
 
     def get_stories(self, offset=0, limit=25, force=False):
         stories_db = MStory.objects(
@@ -988,16 +976,11 @@ class Feed(models.Model):
         story['story_permalink'] = story_db.story_permalink
         story['image_urls'] = story_db.image_urls
         story['story_feed_id'] = feed_id or story_db.story_feed_id
-        story['comment_count'] = story_db.comment_count if hasattr(
-            story_db, 'comment_count') else 0
-        story['comment_user_ids'] = story_db.comment_user_ids if hasattr(
-            story_db, 'comment_user_ids') else []
-        story['share_count'] = story_db.share_count if hasattr(
-            story_db, 'share_count') else 0
-        story['share_user_ids'] = story_db.share_user_ids if hasattr(
-            story_db, 'share_user_ids') else []
-        story['guid_hash'] = story_db.guid_hash if hasattr(
-            story_db, 'guid_hash') else None
+        story['comment_count'] = story_db.comment_count if hasattr(story_db, 'comment_count') else 0
+        story['comment_user_ids'] = story_db.comment_user_ids if hasattr(story_db, 'comment_user_ids') else []
+        story['share_count'] = story_db.share_count if hasattr(story_db, 'share_count') else 0
+        story['share_user_ids'] = story_db.share_user_ids if hasattr(story_db, 'share_user_ids') else []
+        story['guid_hash'] = story_db.guid_hash if hasattr(story_db, 'guid_hash') else None
         if hasattr(story_db, 'source_user_id'):
             story['source_user_id'] = story_db.source_user_id
         story['id'] = story_db.story_guid or story_db.story_date
@@ -1060,16 +1043,9 @@ class Feed(models.Model):
         story_has_changed = False
         story_link = self.get_permalink(story)
         existing_stories_guids = existing_stories.keys()
-        # story_pub_date = story.get('published')
-        # story_published_now = story.get('published_now', False)
-        # start_date = story_pub_date - datetime.timedelta(hours=8)
-        # end_date = story_pub_date + datetime.timedelta(hours=8)
 
         for existing_story in existing_stories.values():
             content_ratio = 0
-            # existing_story_pub_date = existing_story.story_date
-            # print 'Story pub date: %s %s' % (story_published_now,
-            # story_pub_date)
 
             if 'story_latest_content_z' in existing_story:
                 existing_story_content = unicode(
@@ -1146,15 +1122,6 @@ class Feed(models.Model):
         #     print 'New/updated story: %s' % (story),
         return story_in_system, story_has_changed
 
-    
-
-    @property
-    def error_count(self):
-        r = redis.Redis(connection_pool=settings.REDIS_FEED_POOL)
-        fetch_errors = int(r.zscore('error_feeds', self.pk) or 0)
-
-        return fetch_errors + self.errors_since_good
-
 
 
     def queue_pushed_feed_xml(self, xml):
@@ -1168,6 +1135,7 @@ class Feed(models.Model):
                           (unicode(self)[:30], self.pk))
             self.set_next_scheduled_update()
             PushFeeds.apply_async(args=(self.pk, xml), queue='push_feeds')
+
 
 class MFeedPage(mongo.Document):
     feed_id = mongo.IntField(primary_key=True)
@@ -1198,6 +1166,8 @@ class MFeedPage(mongo.Document):
                 data = zlib.decompress(page_data_z)
 
         return data
+
+
 
 class MStory(mongo.Document):
 
@@ -1552,6 +1522,9 @@ class MStory(mongo.Document):
         self.save()
 
     def extract_image_urls(self, force=False):
+        '''
+        extract images from story_content
+        '''
         if self.image_urls and not force:
             return self.image_urls
 
@@ -1584,6 +1557,7 @@ class MStory(mongo.Document):
 
         self.image_urls = image_urls
         return self.image_urls
+
 
     def fetch_reference_images(self,force=False):
         if not self.id:
@@ -1649,20 +1623,21 @@ class MStory(mongo.Document):
         return image_ids
 
 
+
     def fetch_original_text(self, force=False, request=None):
+        '''
+        according to the story.story_permalink,
+        this method go to fetch the html document and get the content
+        If original_text_z is not null, the decompress it and return.
+        '''
         original_text_z = self.original_text_z
-        feed = Feed.get_by_id(self.story_feed_id)
 
         if not original_text_z or force:
-            try:
+                feed = Feed.get_by_id(self.story_feed_id)
                 ti = TextImporter(self, feed=feed, request=request)
                 original_text = ti.fetch()
-            except Exception,e:
-                logging.debug("TypeErrorDebug(original_text): %s" %self.story_permalink)
-                return ''
         else:
-            logging.user(
-                request, "~FYFetching ~FGoriginal~FY story text, ~SBfound.")
+            logging.user(request, "~FYFetching ~FGoriginal~FY story text, ~SBfound.")
             original_text = zlib.decompress(original_text_z)
 
         return original_text

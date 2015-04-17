@@ -13,10 +13,13 @@ import traceback
 from django.core.mail import mail_admins
 import gzip, cStringIO
 
-# 该类根据story中的permalink去抓取该story的htnl文档，
-# 然后使用readability抽取正文
 
 class TextImporter:
+
+    '''
+    according to the story_permalink, the urllib2 go to fetch 
+    the html document, and parse the content of the document.
+    '''
 
     def __init__(self, story, feed, request=None):
         self.story = story
@@ -78,7 +81,7 @@ class TextImporter:
             #     mail_admins("Error in text_importer Build Document",str(e)+\
             #         '  feed_id:'+str(self.story.story_feed_id)+\
             #         '  stroy_link:'+str(self.story.story_permalink)+\
-            #         traceback.format_exc())
+            #         traceback.format_exc())   
             return
 
         if len(content)<60:
