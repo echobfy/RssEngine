@@ -1808,6 +1808,13 @@ class MFetchHistory(mongo.Document):
 
     @classmethod
     def feed(cls, feed_id, timezone=None, fetch_history=None):
+        ''' 
+            fetch_history is instance of MFetchHistory
+            and the method is return a dict which is similar to 
+            {
+                'feed_fetch_history': [{}]
+            }
+        '''
         if not fetch_history:
             try:
                 fetch_history = cls.objects.read_preference(pymongo.ReadPreference.PRIMARY)\
