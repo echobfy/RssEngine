@@ -7,7 +7,7 @@ import django.http
 import re
 from mongoengine import connect
 
-SEND_ERROR_MAILS = False#True
+SEND_ERROR_MAILS = False
 D_OCEAN_REDIS_POOL = redis.ConnectionPool(host="172.21.1.156", port=6379, db=0)
 
 # ===========================
@@ -46,14 +46,11 @@ MANAGERS = ADMINS
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql_psycopg2',
-        # Add 'postgresql_psycopg2', 'mysql', 'sqlite3' or 'oracle'.
         'NAME': 'mydb',
-        # Or path to database file if using sqlite3.
-        # The following settings are not used with sqlite3:
         'USER': 'postgres',
         'PASSWORD': 'postgres1234',
-        'HOST': 'localhost',                      # Empty for localhost through domain sockets or '127.0.0.1' for localhost through TCP.
-        'PORT': '',                      # Set to empty string for default.
+        'HOST': 'localhost',
+        'PORT': '',        
     }
 }
 
@@ -277,15 +274,6 @@ ELASTICSEARCH_HOSTS = ['localhost:9200']
 FDFS_CLIENT_CONF_PATH = os.path.join(CURRENT_DIR, 'conf/fdfs/client.conf')
 # bind the ip and port
 FDFS_HTTP_SERVER = 'http://172.21.1.155:8090/'
-
-# ===============
-# = AWS Backing =
-# ===============
-
-BACKED_BY_AWS = {
-    'pages_on_s3': False,
-    'icons_on_s3': False,
-}
 
 # Hosts/domain names that are valid for this site; required if DEBUG is False
 # See https://docs.djangoproject.com/en/1.5/ref/settings/#allowed-hosts

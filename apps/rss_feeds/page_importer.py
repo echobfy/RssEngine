@@ -36,6 +36,7 @@ BROKEN_PAGE_URLS = [
     'rankexploits',
 ]
 
+# 主要根据feed的feed_link打开链接，返回获取页面
 class PageImporter(object):
     
     def __init__(self, feed):

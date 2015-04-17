@@ -212,6 +212,7 @@ class NewFeeds(Task):
             if not feed: continue
             feed.update(options=options)
 
+
 class PushFeeds(Task):
     name = 'push-feeds'
     max_retries = 0
@@ -233,6 +234,7 @@ class PushFeeds(Task):
         if feed:
             feed.update(options=options)
 
+
 class ScheduleImmediateFetches(Task):
 
     def run(self, feed_ids, **kwargs):
@@ -253,6 +255,7 @@ class SchedulePremiumSetup(Task):
             feed_ids = [feed_ids]
 
         Feed.setup_feeds_for_premium_subscribers(feed_ids)
+        
 
 class FreezeFeeds(Task):
     name = 'freeze-feeds'

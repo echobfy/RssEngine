@@ -22,9 +22,6 @@ class IconImporter(object):
         self.feed = feed
         self.force = force
         self.page_data = page_data
-        # Modified By Xinyan Lu : get_or_create is a deprecated method
-        # self.feed_icon, _ = MFeedIcon.objects.get_or_create(feed_id=self.feed.pk)
-        # self.feed_icon, _ = MFeedIcon.objects(feed_id=self.feed.pk).update_one(upsert=True)
         try:
             self.feed_icon = MFeedIcon.objects.get(feed_id=self.feed.pk)
         except MFeedIcon.DoesNotExist, e:
@@ -169,16 +166,6 @@ class IconImporter(object):
         image_file = None
         if self.page_data:
             content = self.page_data
-        # Deleted By Xinyan Lu : No S3 storage
-        # elif settings.BACKED_BY_AWS.get('pages_on_s3') and self.feed.s3_page:
-        #     key = settings.S3_PAGES_BUCKET.get_key(self.feed.s3_pages_key)
-        #     compressed_content = key.get_contents_as_string()
-        #     stream = StringIO(compressed_content)
-        #     gz = gzip.GzipFile(fileobj=stream)
-        #     try:
-        #         content = gz.read()
-        #     except IOError:
-        #         content = None
         else:
             content = MFeedPage.get_data(feed_id=self.feed.pk)
         # Modified By Xinyan Lu : content may be None

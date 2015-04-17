@@ -52,12 +52,14 @@ class FetchFeed:
         modified = self.feed.last_modified.utctimetuple()[:7] if self.feed.last_modified else None
         address = self.feed.feed_address
         
+        # 如果强制去抓，或者概率小于1%的时候，不要设置modified字段和etag字段，表明获取新文档
         if (self.options.get('force') or random.random() <= .01):
             modified = None
             etag = None
             address = cache_bust_url(address)
             logging.debug(u'   ---> [%-30s] ~FBForcing fetch: %s' % (
                           self.feed.title[:30], address))
+        # 或者曾经没抓过的，而且这个feed也不是好的
         elif (not self.feed.fetched_once or not self.feed.known_good):
             modified = None
             etag = None
@@ -156,6 +158,7 @@ class ProcessFeed:
             if self.fpf.status >= 400:
                 logging.debug("   ---> [%-30s] ~SB~FRHTTP Status code: %s. Checking address..." % (self.feed.title[:30], self.fpf.status))
                 fixed_feed = None
+                # 如果feed不是好的话，尝试修复feed
                 if not self.feed.known_good:
                     fixed_feed, feed = self.feed.check_feed_link_for_feed_address()
                 if not fixed_feed:
@@ -189,8 +192,8 @@ class ProcessFeed:
                 self.feed = self.feed.save()
                 return FEED_ERRPARSE, ret_values
                 
-        # the feed has changed (or it is the first time we parse it)
-        # saving the etag and last_modified fields
+        # 如果该feed已经改变了，或者这是第一次抓取该feed
+        # 保存其中的etag和last_modified 
         self.feed.etag = self.fpf.get('etag')
         if self.feed.etag:
             self.feed.etag = self.feed.etag[:255]
@@ -230,7 +233,7 @@ class ProcessFeed:
             story_date__gte=start_date,
             story_feed_id=self.feed.pk
         ).limit(max(int(len(story_guids)*1.5), 10)))
-        
+
         ret_values = self.feed.add_update_stories(stories, existing_stories,
                                                   verbose=self.options['verbose'])
 
@@ -286,7 +289,9 @@ class ProcessFeed:
         
         return FEED_OK, ret_values
 
-        
+
+
+
 class Dispatcher:
     def __init__(self, options, num_threads):
         self.options = options
@@ -355,8 +360,9 @@ class Dispatcher:
                         rand, quick))
                     continue
                 
-                # 创建FetchFeed类（在本文件中）
+                # 创建FetchFeed类
                 ffeed = FetchFeed(feed_id, self.options)
+                # fetch函数会去取得feed_address的页面，ret_feed表示状态，fetched_feed表示结果
                 ret_feed, fetched_feed = ffeed.fetch()
                 feed_fetch_duration = time.time() - start_duration
                 
@@ -509,8 +515,6 @@ class Dispatcher:
             return feed
 
 
-        
-        # time_taken = datetime.datetime.utcnow() - self.time_start
     
     def publish_to_subscribers(self, feed):
         try:

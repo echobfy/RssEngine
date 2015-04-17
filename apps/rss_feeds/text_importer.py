@@ -13,6 +13,9 @@ import traceback
 from django.core.mail import mail_admins
 import gzip, cStringIO
 
+# 该类根据story中的permalink去抓取该story的htnl文档，
+# 然后使用readability抽取正文
+
 class TextImporter:
 
     def __init__(self, story, feed, request=None):

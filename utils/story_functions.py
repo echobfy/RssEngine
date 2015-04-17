@@ -48,7 +48,8 @@ def _extract_date_tuples(date):
     yesterday_tuple = datetime.datetime.timetuple(today - datetime.timedelta(1))[:3]
     
     return parsed_date, date_tuple, today_tuple, yesterday_tuple
-    
+
+# 在处理每个feed页面中的entry时，先调用该函数
 def pre_process_story(entry):
     publish_date = entry.get('published_parsed') or entry.get('updated_parsed')
     if publish_date:
