@@ -19,11 +19,6 @@ class NetMonitorTask(Task):
         NetworkMonitor.test()
         logging.debug("%s [MonitorTask] finish" % (time.strftime("%Y-%m-%d %H:%M:%S")))
 
-# tasked_feeds（有序集合）：存储的是已经将任务分发出去，但是还未执行完成的feed_id
-# fetched_feeds_last_hour（有序集合）：存储的是相对于现在过去一小时已经抓过的feed_id，与现在相比一小时之内的还在该集合内
-# scheduled_updates（有序集合）：存储的是将要调度来抓取的feed_id
-# queued_feeds（集合）：存储是正常排队的feed_id，将要做成task分发出去
-
 
 class TaskFeeds(Task):
     name = 'task-feeds'
@@ -31,19 +26,18 @@ class TaskFeeds(Task):
     def run(self, **kwargs):
         try:
             from apps.rss_feeds.models import Feed
-            settings.LOG_TO_STREAM = True
+            #settings.LOG_TO_STREAM = True
             now = datetime.datetime.utcnow()
             start = time.time()
             r = redis.Redis(connection_pool=settings.REDIS_FEED_POOL)
 
-            # 得到tasked_feeds（有序集合）中的个数
+            # get the size of tasked_feeds
             tasked_feeds_size = r.zcard('tasked_feeds')
 
             hour_ago = now - datetime.timedelta(hours=1)
-            # 移除一小时之前抓过的feed_id，一小时之内抓过的还在此集合内
             r.zremrangebyscore('fetched_feeds_last_hour', 0, int(hour_ago.strftime('%s')))
 
-            # 获得scheduled_updates中到目前为止所以的feed_id，并删除
+            # get the feed_ids in the scheduled_updates, and delete them.
             now_timestamp = int(now.strftime("%s"))
             queued_feeds = r.zrangebyscore('scheduled_updates', 0, now_timestamp)
             r.zremrangebyscore('scheduled_updates', 0, now_timestamp)
@@ -54,7 +48,7 @@ class TaskFeeds(Task):
                             r.scard('queued_feeds'),
                             r.zcard('scheduled_updates')))
 
-            # 从可以调度的队列中获取全部的feed_id，扔到排队队列中
+            # and add to queued_feeds the feed_ids which come from scheduled_updates.
             if len(queued_feeds)>0:
                 r.sadd('queued_feeds', *queued_feeds)
 
@@ -64,10 +58,13 @@ class TaskFeeds(Task):
                             r.scard('queued_feeds'),
                             r.zcard('scheduled_updates')))
 
-            # 如果已经分发出去的任务个数小于5000，就从排队的queued_feeds中获取至多5000的feed_id，拿去
+            # if the number of fetch task is less than 5000, and then get no more than 5000 feed_ids from queued_feeds
             if tasked_feeds_size < 5000:
                 feeds = r.srandmember('queued_feeds',5000)
-                # 该函数会将feeds中的id从queued_feeds中删除，然后添加到tasked_feeds中，再制作成任务分发出去
+                # this method will delete the feed_ids in queued_feeds, and add them to tasked_feeds, and package feed_id
+                # to a fetch task and distribute.
+                # Note: feed_id delete from tasked_feeds only after the fetch is over. 
+                # the method is sync, but task.apply_async is not.
                 Feed.task_feeds(feeds, verbose=True)
                 active_count = len(feeds)
             else:
@@ -75,23 +72,26 @@ class TaskFeeds(Task):
                 active_count = 0
             cp1 = time.time()
 
-            # Force refresh feeds
+            # order_by('?') is to order randomly
+            # If the system is started, and the scheduled_updates(Sorted_Set) is null, 
+            # this method will force the feed that is not fetched once to schedule.
+            # And this method will also force the new feed to refresh.
             refresh_feeds = Feed.objects.filter(
-                active=True,
                 fetched_once=False,
                 active_subscribers__gte=1
             ).order_by('?')[:100]
             refresh_count = refresh_feeds.count()
             cp2 = time.time()
 
-            # Mistakenly inactive feeds
+            # Mistakenly inactive feeds.
+            # If the feed is not fetched in 10 minutes, we assume that the feeds are maybe wrong or fetch error.
             hours_ago = (now - datetime.timedelta(minutes=10)).strftime('%s')
             old_tasked_feeds = r.zrangebyscore('tasked_feeds', 0, hours_ago)
             inactive_count = len(old_tasked_feeds)
             if inactive_count:
                 r.zremrangebyscore('tasked_feeds', 0, hours_ago)
-                # r.sadd('queued_feeds', *old_tasked_feeds)
                 for feed_id in old_tasked_feeds:
+                    # add this feed_id in error_feeds, and set next scheduled update for it.
                     r.zincrby('error_feeds', feed_id, 1)
                     feed = Feed.get_by_id(feed_id)
                     feed.set_next_scheduled_update()
@@ -132,8 +132,8 @@ class TaskFeeds(Task):
             import traceback
             traceback.print_exc()
             logging.error(str(e))
-            if settings.SEND_ERROR_MAILS:
-                mail_admins("Error in Task-Feeds",str(e)+'\n'+traceback.format_exc())
+            #if settings.SEND_ERROR_MAILS:
+                #mail_admins("Error in Task-Feeds",str(e)+'\n'+traceback.format_exc())
 
 class UpdateFeeds(Task):
     name = 'update-feeds'
@@ -143,10 +143,7 @@ class UpdateFeeds(Task):
     def run(self, feed_pks, **kwargs):
         try:
             from apps.rss_feeds.models import Feed
-            #from apps.statistics.models import MStatistics
             r = redis.Redis(connection_pool=settings.REDIS_FEED_POOL)
-            #mongodb_replication_lag = int(MStatistics.get('mongodb_replication_lag', 0))
-            #compute_scores = bool(mongodb_replication_lag < 10)
 
             options = {
             #    'quick': float(MStatistics.get('quick_fetch', 0)),
@@ -159,7 +156,8 @@ class UpdateFeeds(Task):
 
             for feed_pk in feed_pks:
                 feed = Feed.get_by_id(feed_pk)
-                # 如果该feed_id的feed被删除，或者该feed的pk被修改
+                # if feed is null or feed.pk != feed_pk, then delete the feed_pk from tasked_feeds
+                # otherwise delete the feed_pk after the fetch is over.
                 if not feed or feed.pk != int(feed_pk):
                     logging.info(" ---> ~FRRemoving feed_id %s from tasked_feeds queue, points to %s..." % (feed_pk, feed and feed.pk))
                     r.zrem('tasked_feeds', feed_pk)
@@ -169,8 +167,8 @@ class UpdateFeeds(Task):
             logging.error(str(e)+\
                 traceback.format_exc()+'\n'+\
                 'error from:  UpdateFeeds\n')
-            if settings.SEND_ERROR_MAILS:
-                mail_admins("Error in UpdateFeeds",str(e)+'\n'+traceback.format_exc())
+           # if settings.SEND_ERROR_MAILS:
+                #mail_admins("Error in UpdateFeeds",str(e)+'\n'+traceback.format_exc())
 
 
 class UpdateFeedImages(Task):
@@ -244,17 +242,6 @@ class ScheduleImmediateFetches(Task):
             feed_ids = [feed_ids]
 
         Feed.schedule_feed_fetches_immediately(feed_ids)
-
-
-class SchedulePremiumSetup(Task):
-
-    def run(self, feed_ids, **kwargs):
-        from apps.rss_feeds.models import Feed
-
-        if not isinstance(feed_ids, list):
-            feed_ids = [feed_ids]
-
-        Feed.setup_feeds_for_premium_subscribers(feed_ids)
         
 
 class FreezeFeeds(Task):

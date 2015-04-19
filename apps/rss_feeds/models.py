@@ -36,8 +36,8 @@ from utils.feed_functions import seconds_timesince
 from utils.story_functions import strip_tags, htmldiff, strip_comments, strip_comments__lxml
 import pytz
 from apps.search.models import SearchStory
-from fdfs_client.client import Fdfs_client,DataError
-from PIL import Image
+#from fdfs_client.client import Fdfs_client,DataError
+#from PIL import Image
 import cStringIO
 import urllib2
 import traceback
@@ -53,26 +53,23 @@ ENTRY_NEW, ENTRY_UPDATED, ENTRY_SAME, ENTRY_ERR = range(4)
 
 class Feed(models.Model):
     feed_address = models.URLField(max_length=764, db_index=True)
-    feed_address_locked = models.NullBooleanField(
-        default=False, blank=True, null=True)
     feed_link = models.URLField(
         max_length=1000, default="", blank=True, null=True)
-    feed_link_locked = models.BooleanField(default=False)
     hash_address_and_link = models.CharField(max_length=64, unique=True)  # 将feed_address + feed_link sha1加密并返回十六进制字符串
     feed_title = models.CharField(
         max_length=255, default="[Untitled]", blank=True, null=True)
-    is_push = models.NullBooleanField(default=False, blank=True, null=True)
-    active = models.BooleanField(default=True, db_index=True)
+
     num_subscribers = models.IntegerField(default=-1)
     active_subscribers = models.IntegerField(default=-1, db_index=True)
     premium_subscribers = models.IntegerField(default=-1)
     active_premium_subscribers = models.IntegerField(default=-1)
+
     branch_from_feed = models.ForeignKey(
         'Feed', blank=True, null=True, db_index=True)
-    last_update = models.DateTimeField(db_index=True)
-    next_scheduled_update = models.DateTimeField()                  # 下一个调度更新的时间
-    last_story_date = models.DateTimeField(null=True, blank=True)   # 最近的一次story日期
-    fetched_once = models.BooleanField(default=False)               #曾经抓过的
+    last_update = models.DateTimeField(db_index=True)               # the last update time for the record of feed
+    next_scheduled_update = models.DateTimeField()                  # the next time to schedule this feed_id
+    last_story_date = models.DateTimeField(null=True, blank=True)   # the last story date
+    fetched_once = models.BooleanField(default=False)               # fetched once before
     known_good = models.BooleanField(default=False)
 
     has_feed_exception = models.BooleanField(default=False, db_index=True)
@@ -82,16 +79,14 @@ class Feed(models.Model):
     exception_code = models.IntegerField(default=0)
     errors_since_good = models.IntegerField(default=0)              #errors_since_good表示自从上次成功抓取以来，已经发生错误多少次，如果成功就为0
 
-    min_to_decay = models.IntegerField(default=0)                   # 衰减的minutes
-    days_to_trim = models.IntegerField(default=90)
-    creation = models.DateField(auto_now_add=True)
+    min_to_decay = models.IntegerField(default=0)                   # 衰减的min
+    creation = models.DateField(auto_now_add=True)                  # when the feed created
 
     etag = models.CharField(max_length=255, blank=True, null=True)  # etag表示资源实体，再次请求时与请求一起发送，如果不变则不返回实体
     last_modified = models.DateTimeField(null=True, blank=True)     # 与etag作用类似，标记文件最后一次改动的时间，节省流量。
 
-    stories_last_month = models.IntegerField(default=0)             # 最近一个月总共的stories个数
-    average_stories_per_month = models.IntegerField(default=0)
-    last_load_time = models.IntegerField(default=0)
+    stories_last_month = models.IntegerField(default=0)             # the number of stories about this feed_id las month.
+    last_load_time = models.IntegerField(default=0)                 # the last cost time of fetching feed.link
 
     class Meta:
         db_table = "feeds"
@@ -154,8 +149,6 @@ class Feed(models.Model):
 
         if not self.has_page:
             feed['disabled_page'] = True
-        if full:
-            feed['average_stories_per_month'] = self.average_stories_per_month
 
         return feed
 
@@ -483,9 +476,6 @@ class Feed(models.Model):
                     original_feed.save()
                     merge_feeds(original_feed.pk, self.pk)
             return feed_address, feed
-
-        if self.feed_address_locked:
-            return False, self
 
         try:
             feed_address, feed = _1()
@@ -906,9 +896,9 @@ class Feed(models.Model):
         elif self.active_premium_subscribers <= 20:
             cutoff = 200000
 
-        if self.active_subscribers and self.average_stories_per_month < 5 and self.stories_last_month < 5:
+        if self.active_subscribers and self.stories_last_month < 5:
             cutoff /= 2
-        if self.active_premium_subscribers <= 1 and self.average_stories_per_month <= 1 and self.stories_last_month <= 1:
+        if self.active_premium_subscribers <= 1 and self.stories_last_month <= 1:
             cutoff /= 2
 
         return cutoff

@@ -45,10 +45,13 @@ MANAGERS = ADMINS
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.postgresql_psycopg2',
+        #'ENGINE': 'django.db.backends.postgresql_psycopg2',
+        #'NAME': 'mydb',
+        #'USER': 'postgres',
+        #'PASSWORD': 'postgres1234',
+        'ENGINE': 'django.db.backends.mysql',
         'NAME': 'mydb',
-        'USER': 'postgres',
-        'PASSWORD': 'postgres1234',
+        'USER': 'root',
         'HOST': 'localhost',
         'PORT': '',        
     }
@@ -210,7 +213,6 @@ CACHES = {
 REDIS_POOL               = redis.ConnectionPool(host=REDIS['host'], port=6379, db=0)
 REDIS_ANALYTICS_POOL     = redis.ConnectionPool(host=REDIS['host'], port=6379, db=2)
 REDIS_STATISTICS_POOL    = redis.ConnectionPool(host=REDIS['host'], port=6379, db=3)
-# REDIS_FEED_POOL数据库存放的是几个集合和队列(tasked_feeds, fetched_feeds_last_hour, scheduled_updates, queued_feeds)
 REDIS_FEED_POOL          = redis.ConnectionPool(host=REDIS['host'], port=6379, db=4)
 REDIS_SESSION_POOL       = redis.ConnectionPool(host=REDIS['host'], port=6379, db=5)
 REDIS_NETWORK_POOL       = redis.ConnectionPool(host=REDIS['host'], port=6379, db=6)
@@ -230,22 +232,26 @@ REDIS_NETWORK_LOG_NAME= "network_log"
 # =========
 
 MONGO_DB = {
-    'host': '172.21.1.155:27017',
+	#'host': '172.21.1.155:27017',
+	'host': 'localhost',
     'name': 'doctopus',
 }
 MONGO_ANALYTICS_DB = {
-    'host': '172.21.1.155:27017',
+	#'host': '172.21.1.155:27017',
+	'host': 'localhost',
     'name': 'nbanalytics',
 }
 
 MONGO_DB_DEFAULTS = {
     'name': 'doctopus',
-    'host': '172.21.1.155:27017',
+	#'host': '172.21.1.155:27017',
+	'host': 'localhost',
     'alias': 'default',
 }
 MONGO_ANALYTICS_DB_DEFAULTS = {
     'name': 'nbanalytics',
-    'host': '172.21.1.155:27017',
+	#'host': '172.21.1.155:27017',
+	'host': 'localhost',
     'alias': 'nbanalytics',
 }
 MONGO_DB = dict(MONGO_DB_DEFAULTS, **MONGO_DB)
@@ -256,9 +262,9 @@ MONGO_DB = dict(MONGO_DB_DEFAULTS, **MONGO_DB)
 #     MONGOPRIMARYDB = connect(MONGO_PRIMARY_DB.pop('name'), **MONGO_PRIMARY_DB)
 # else:
 #     MONGOPRIMARYDB = MONGODB
-MONGODB = connect(MONGO_DB.pop('name'), **MONGO_DB)
+#MONGODB = connect(MONGO_DB.pop('name'), **MONGO_DB)
 MONGO_ANALYTICS_DB = dict(MONGO_ANALYTICS_DB_DEFAULTS, **MONGO_ANALYTICS_DB)
-MONGOANALYTICSDB = connect(MONGO_ANALYTICS_DB.pop('name'), **MONGO_ANALYTICS_DB)
+#MONGOANALYTICSDB = connect(MONGO_ANALYTICS_DB.pop('name'), **MONGO_ANALYTICS_DB)
 
 # =================
 # = Elasticsearch =

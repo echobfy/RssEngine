@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import pyes
 from pyes.query import Search,QueryStringQuery,FilteredQuery, FuzzyQuery, TextQuery, PrefixQuery
 from pyes.filters import RangeFilter

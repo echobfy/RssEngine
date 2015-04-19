@@ -212,8 +212,7 @@ class ProcessFeed:
         if self.fpf.feed.get('title'):
             self.feed.feed_title = strip_tags(self.fpf.feed.get('title'))
 
-        if not self.feed.feed_link_locked:
-            self.feed.feed_link = self.fpf.feed.get('link') or self.fpf.feed.get('id') or self.feed.feed_link
+        self.feed.feed_link = self.fpf.feed.get('link') or self.fpf.feed.get('id') or self.feed.feed_link
         
         self.feed = self.feed.save()
 
