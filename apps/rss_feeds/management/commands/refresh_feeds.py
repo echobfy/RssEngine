@@ -42,8 +42,7 @@ class Command(BaseCommand):
         
         if options['skip']:
             feeds = Feed.objects.filter(next_scheduled_update__lte=now,
-                                        average_stories_per_month__lt=options['skip'],
-                                        active=True)
+                                        average_stories_per_month__lt=options['skip'])
             print " ---> Skipping %s feeds" % feeds.count()
             for feed in feeds:
                 feed.set_next_scheduled_update()
@@ -64,7 +63,7 @@ class Command(BaseCommand):
             # feeds = Feed.objects.all()
             feeds = Feed.objects.filter(num_subscribers__gte=2)
         else:
-            # feeds = Feed.objects.filter(next_scheduled_update__lte=now, active=True)
+            # feeds = Feed.objects.filter(next_scheduled_update__lte=now)
             feeds = Feed.objects.filter(next_scheduled_update__lte=now, num_subscribers__gte=2)
         
         if options['has_feed_exception']:

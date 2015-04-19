@@ -55,7 +55,7 @@ class Feed(models.Model):
     feed_address = models.URLField(max_length=764, db_index=True)
     feed_link = models.URLField(
         max_length=1000, default="", blank=True, null=True)
-    hash_address_and_link = models.CharField(max_length=64, unique=True)  # 将feed_address + feed_link sha1加密并返回十六进制字符串
+    hash_address_and_link = models.CharField(max_length=64, unique=True)  # hashlib.sha1(feed_address + feed_link)
     feed_title = models.CharField(
         max_length=255, default="[Untitled]", blank=True, null=True)
 
@@ -64,20 +64,18 @@ class Feed(models.Model):
     premium_subscribers = models.IntegerField(default=-1)
     active_premium_subscribers = models.IntegerField(default=-1)
 
-    branch_from_feed = models.ForeignKey(
-        'Feed', blank=True, null=True, db_index=True)
     last_update = models.DateTimeField(db_index=True)               # the last update time for the record of feed
     next_scheduled_update = models.DateTimeField()                  # the next time to schedule this feed_id
     last_story_date = models.DateTimeField(null=True, blank=True)   # the last story date
     fetched_once = models.BooleanField(default=False)               # fetched once before
-    known_good = models.BooleanField(default=False)
+    known_good = models.BooleanField(default=False)                 # the feed is not good feed, after the fetch is OK, then good
 
     has_feed_exception = models.BooleanField(default=False, db_index=True)
     has_page_exception = models.BooleanField(default=False, db_index=True)
     has_page = models.BooleanField(default=True)
 
     exception_code = models.IntegerField(default=0)
-    errors_since_good = models.IntegerField(default=0)              #errors_since_good表示自从上次成功抓取以来，已经发生错误多少次，如果成功就为0
+    errors_since_good = models.IntegerField(default=0)              # it means number of errors since the last a good fetch
 
     min_to_decay = models.IntegerField(default=0)                   # 衰减的min
     creation = models.DateField(auto_now_add=True)                  # when the feed created
@@ -91,19 +89,17 @@ class Feed(models.Model):
     class Meta:
         db_table = "feeds"
         ordering = ["feed_title"]
-        # unique_together=[('feed_address', 'feed_link')]
 
     def __unicode__(self):
         if not self.feed_title:
             self.feed_title = "[Untitled]"
             self.save()
-        return "%s (%s - %s/%s/%s)%s" % (
+        return "%s (%s - %s/%s/%s)" % (
             self.feed_title,
             self.pk,
             self.num_subscribers,
             self.active_subscribers,
-            self.active_premium_subscribers,
-            (" [B: %s]" % self.branch_from_feed.pk if self.branch_from_feed else ""))
+            self.active_premium_subscribers)
 
     @property
     def title(self):
@@ -208,7 +204,7 @@ class Feed(models.Model):
         return self
 
     def index_for_search(self):
-        if self.num_subscribers > 1 and not self.branch_from_feed:
+        if self.num_subscribers > 1:
             SearchFeed.index(feed_id=self.pk,
                              title=self.feed_title,
                              address=self.feed_address,
@@ -311,13 +307,9 @@ class Feed(models.Model):
                 return {'%s' % key: value}
 
         def by_url(address):
-            feed = cls.objects.filter(
-                branch_from_feed=None
-            ).filter(**criteria('feed_address', address)).order_by('-num_subscribers')
+            feed = cls.objects.filter(**criteria('feed_address', address)).order_by('-num_subscribers')
             if not feed and aggressive:
-                feed = cls.objects.filter(
-                    branch_from_feed=None
-                ).filter(**criteria('feed_link', address)).order_by('-num_subscribers')
+                feed = cls.objects.filter(**criteria('feed_link', address)).order_by('-num_subscribers')
 
             return feed
 
@@ -466,13 +458,11 @@ class Feed(models.Model):
                     feed = self.save()
                     feed.schedule_feed_fetch_immediately()
                     feed.has_feed_exception = False
-                    feed.active = True
                     feed = feed.save()
                 except IntegrityError:
                     original_feed = Feed.objects.get(
                         feed_address=feed_address, feed_link=self.feed_link)
                     original_feed.has_feed_exception = False
-                    original_feed.active = True
                     original_feed.save()
                     merge_feeds(original_feed.pk, self.pk)
             return feed_address, feed
@@ -573,6 +563,7 @@ class Feed(models.Model):
 
 
     def save_feed_history(self, status_code, message, exception=None):
+        # Note: the status_code, message, feed_fetch_type will be added to history and return.
         fetch_history = MFetchHistory.add(feed_id=self.pk,
                                           fetch_type='feed',
                                           code=int(status_code),
@@ -582,17 +573,16 @@ class Feed(models.Model):
         # if the status_code is not 200 or 304, it means it is wrong
         if status_code not in (200, 304):
             self.errors_since_good += 1
-            self.count_errors_in_history(
-                'feed', status_code, fetch_history=fetch_history)
+            self.count_errors_in_history('feed', status_code, fetch_history=fetch_history)
             self.set_next_scheduled_update()
         # 如果当前feed_id成功抓取了，那么修改errors_since_good等参数
         elif self.has_feed_exception or self.errors_since_good:
             self.errors_since_good = 0
             self.has_feed_exception = False
-            self.active = True
             self.save()
 
     def save_page_history(self, status_code, message, exception=None):
+        # Note: the status_code, message, feed_fetch_type will be added to history and return.
         fetch_history = MFetchHistory.add(feed_id=self.pk,
                                           fetch_type='page',
                                           code=int(status_code),
@@ -600,12 +590,10 @@ class Feed(models.Model):
                                           exception=exception)
 
         if status_code not in (200, 304):
-            self.count_errors_in_history(
-                'page', status_code, fetch_history=fetch_history)
+            self.count_errors_in_history('page', status_code, fetch_history=fetch_history)
         elif self.has_page_exception or not self.has_page:
             self.has_page_exception = False
             self.has_page = True
-            self.active = True
             self.save()
 
     def count_errors_in_history(self, exception_type='feed', status_code=None, fetch_history=None):
@@ -618,16 +606,13 @@ class Feed(models.Model):
         errors     = [h for h in fh if h['status_code'] and int(h['status_code']) not in (200, 304)]
 
         if len(non_errors) == 0 and len(errors) > 1:
-            self.active = True
             if exception_type == 'feed':
                 self.has_feed_exception = True
-                # self.active = False # No longer, just geometrically fetch
             elif exception_type == 'page':
                 self.has_page_exception = True
             self.exception_code = status_code or int(errors[0])
             self.save()
         elif self.exception_code > 0:
-            self.active = True
             self.exception_code = 0
             if exception_type == 'feed':
                 self.has_feed_exception = False
@@ -638,21 +623,13 @@ class Feed(models.Model):
         return errors, non_errors
 
 
-
     def update(self, **kwargs):
         from utils import feed_fetcher
         r = redis.Redis(connection_pool=settings.REDIS_FEED_POOL)
         original_feed_id = int(self.pk)
 
-        if getattr(settings, 'TEST_DEBUG', False):
-            self.feed_address = self.feed_address.replace(
-                "%(NEWSBLUR_DIR)s", settings.NEWSBLUR_DIR)
-            self.feed_link = self.feed_link.replace(
-                "%(NEWSBLUR_DIR)s", settings.NEWSBLUR_DIR)
-            self.save()
-
         options = {
-            'verbose': kwargs.get('verbose'),
+            'verbose': kwargs.get('verbose', False),
             'timeout': 10,
             'single_threaded': kwargs.get('single_threaded', True),
             'force': kwargs.get('force'),
@@ -661,8 +638,6 @@ class Feed(models.Model):
             'fake': kwargs.get('fake'),
             'quick': kwargs.get('quick'),
             'debug': kwargs.get('debug'),
-            'fpf': kwargs.get('fpf'),
-            'feed_xml': kwargs.get('feed_xml'),
         }
         disp = feed_fetcher.Dispatcher(options, 1)
         disp.add_jobs([[self.pk]])
@@ -671,10 +646,10 @@ class Feed(models.Model):
         if feed:
             feed = Feed.get_by_id(feed.pk)
         if feed:
-            # 当前feed_id抓完之后，更新last_update（最后修改时间），并设置下一次需要调度更新的时间
+            # After the fetch task is done, update last_update and set next_scheduled_update
             feed.last_update = datetime.datetime.utcnow()
             feed.set_next_scheduled_update()
-            # 将抓完的feed_id放入到fetched_feeds_last_hour中，说明过去一小时内抓过
+            # Then add the feed_id into fetched_feeds_last_hour(Sort_Set), means fetch it in a last hour.
             r.zadd('fetched_feeds_last_hour', feed.pk,
                    int(datetime.datetime.now().strftime('%s')))
 
@@ -684,7 +659,7 @@ class Feed(models.Model):
                 original_feed_id)
             r.zrem('tasked_feeds', original_feed_id)
             r.zrem('error_feeds', original_feed_id)
-        # 任务做完之后，将其从tasked_feeds中删除
+        # If task is done, then delete it from tasked_feeds and error_feeds.
         if feed:
             r.zrem('tasked_feeds', feed.pk)
             r.zrem('error_feeds', feed.pk)
@@ -692,7 +667,6 @@ class Feed(models.Model):
         return feed
 
 
-    # 
     def add_update_stories(self, stories, existing_stories, verbose=False):
         ret_values = dict(new=0, updated=0, same=0, error=0)
         error_count = self.error_count
@@ -872,8 +846,6 @@ class Feed(models.Model):
         return ret_values
 
     def update_story_with_new_guid(self, existing_story, new_story_guid):
-
-        existing_story.remove_from_redis()
 
         old_hash = existing_story.story_hash
         new_hash = MStory.ensure_story_hash(new_story_guid, self.pk)
@@ -1138,12 +1110,7 @@ class MFeedPage(mongo.Document):
 
     def save(self, *args, **kwargs):
         if self.page_data:
-            # Modified by Xinyan Lu: supress UnicodeWarning, known to be safe
-            # self.page_data = zlib.compress(self.page_data)
-            import warnings
-            with warnings.catch_warnings(record=True) as w:
-                warnings.simplefilter('always',category=UnicodeWarning)
-                self.page_data = zlib.compress(self.page_data)
+            self.page_data = zlib.compress(self.page_data)
         return super(MFeedPage, self).save(*args, **kwargs)
 
     @classmethod
@@ -1162,28 +1129,30 @@ class MFeedPage(mongo.Document):
 class MStory(mongo.Document):
 
     '''A feed item'''
-    story_feed_id = mongo.IntField()        # 表示该story属于哪个feed_id
+    story_feed_id = mongo.IntField()                    # which feed the story belongs to
     story_date = mongo.DateTimeField()
     story_title = mongo.StringField(max_length=1024)
-    story_content = mongo.StringField()        #只是从feed页面抓取下来的正文内容，省略掉一些
+
+    story_content = mongo.StringField()       
     story_content_z = mongo.BinaryField()
     story_original_content = mongo.StringField()
     story_original_content_z = mongo.BinaryField()
     story_latest_content = mongo.StringField()
     story_latest_content_z = mongo.BinaryField()
-    original_text_z = mongo.BinaryField()
-    original_text = mongo.StringField()         # 表示原始的正文内容
+
+    original_text_z = mongo.BinaryField()               # the main body of story_permalink, and it's from 
+                                                        # fetch_original_text and text_importer.py
+    original_page_z = mongo.BinaryField()               # the html of story_permalink
+
     story_content_type = mongo.StringField(max_length=255)
     story_author_name = mongo.StringField()
     story_permalink = mongo.StringField()
     story_guid = mongo.StringField()
     story_hash = mongo.StringField()
-    image_urls = mongo.ListField(
-        mongo.StringField(max_length=1024))
-    # Add by Xinyan Lu : support images storage
+    image_urls = mongo.ListField(mongo.StringField(max_length=1024))
+
     image_ids = mongo.ListField(mongo.StringField())
-    story_tags = mongo.ListField(
-        mongo.StringField(max_length=250))
+    story_tags = mongo.ListField(mongo.StringField(max_length=250))
     comment_count = mongo.IntField()
     comment_user_ids = mongo.ListField(mongo.IntField())
     share_count = mongo.IntField()
@@ -1241,9 +1210,9 @@ class MStory(mongo.Document):
 
     def save(self, *args, **kwargs):
         story_title_max = MStory._fields['story_title'].max_length
-        story_content_type_max = MStory._fields[
-            'story_content_type'].max_length
-        self.story_hash = self.feed_guid_hash
+        story_content_type_max = MStory._fields['story_content_type'].max_length
+        self.story_hash = self
+        .feed_guid_hash
 
         # store original story_content, or it will be erased
         story_content = self.story_content
@@ -1252,18 +1221,15 @@ class MStory(mongo.Document):
             self.story_content_z = zlib.compress(self.story_content)
             self.story_content = None
         if self.story_original_content:
-            self.story_original_content_z = zlib.compress(
-                self.story_original_content)
+            self.story_original_content_z = zlib.compress(self.story_original_content)
             self.story_original_content = None
         if self.story_latest_content:
-            self.story_latest_content_z = zlib.compress(
-                self.story_latest_content)
+            self.story_latest_content_z = zlib.compress(self.story_latest_content)
             self.story_latest_content = None
         if self.story_title and len(self.story_title) > story_title_max:
             self.story_title = self.story_title[:story_title_max]
         if self.story_content_type and len(self.story_content_type) > story_content_type_max:
-            self.story_content_type = self.story_content_type[
-                :story_content_type_max]
+            self.story_content_type = self.story_content_type[:story_content_type_max]
 
         super(MStory, self).save(*args, **kwargs)
 
@@ -1280,13 +1246,9 @@ class MStory(mongo.Document):
         #Add by Xinyan Lu : fetch image on save
         #self.fetch_reference_images()
 
-        self.sync_redis()
-
         return self
 
     def delete(self, *args, **kwargs):
-        self.remove_from_redis()
-
         super(MStory, self).delete(*args, **kwargs)
 
     #Commented By Xinyan Lu : be careful on parameter 'cutoff'
@@ -1360,44 +1322,6 @@ class MStory(mongo.Document):
 
         return story, original_found
 
-    @classmethod
-    def find_by_id(cls, story_ids):
-        from apps.social.models import MSharedStory
-        count = len(story_ids)
-        multiple = isinstance(story_ids, list) or isinstance(story_ids, tuple)
-
-        stories = list(cls.objects(id__in=story_ids))
-        if len(stories) < count:
-            shared_stories = list(MSharedStory.objects(id__in=story_ids))
-            stories.extend(shared_stories)
-
-        if not multiple:
-            stories = stories[0]
-
-        return stories
-
-    @classmethod
-    def find_by_story_hashes(cls, story_hashes):
-        from apps.social.models import MSharedStory
-        count = len(story_hashes)
-        multiple = isinstance(
-            story_hashes, list) or isinstance(story_hashes, tuple)
-
-        stories = list(cls.objects(story_hash__in=story_hashes))
-        if len(stories) < count:
-            hashes_found = [s.story_hash for s in stories]
-            remaining_hashes = list(set(story_hashes) - set(hashes_found))
-            story_feed_ids = [h.split(':')[0] for h in remaining_hashes]
-            shared_stories = list(
-                MSharedStory.objects(story_feed_id__in=story_feed_ids,
-                                     story_hash__in=remaining_hashes))
-            stories.extend(shared_stories)
-
-        if not multiple:
-            stories = stories[0]
-
-
-        return stories
 
     @classmethod
     def ensure_story_hash(cls, story_id, story_feed_id):
@@ -1434,83 +1358,6 @@ class MStory(mongo.Document):
 
         return story_hashes
 
-    def sync_redis(self, r=None):
-        # Disabled by Xinyan Lu: no unread cutoff
-        return
-        if not r:
-            r = redis.Redis(connection_pool=settings.REDIS_STORY_HASH_POOL)
-        # if not r2:
-            # r2 = redis.Redis(connection_pool=settings.REDIS_STORY_HASH_POOL2)
-        UNREAD_CUTOFF = datetime.datetime.now() - datetime.timedelta(
-            days=settings.DAYS_OF_UNREAD_NEW)
-
-        if self.id and self.story_date > UNREAD_CUTOFF:
-            feed_key = 'F:%s' % self.story_feed_id
-            r.sadd(feed_key, self.story_hash)
-            r.expire(feed_key, settings.DAYS_OF_UNREAD_NEW * 24 * 60 * 60)
-            # r2.sadd(feed_key, self.story_hash)
-            # r2.expire(feed_key, settings.DAYS_OF_UNREAD_NEW*24*60*60)
-
-            r.zadd('z' + feed_key, self.story_hash,
-                   time.mktime(self.story_date.timetuple()))
-            r.expire(
-                'z' + feed_key, settings.DAYS_OF_UNREAD_NEW * 24 * 60 * 60)
-            # r2.zadd('z' + feed_key, self.story_hash, time.mktime(self.story_date.timetuple()))
-            # r2.expire('z' + feed_key, settings.DAYS_OF_UNREAD_NEW*24*60*60)
-
-    def remove_from_redis(self, r=None):
-        # Disabled by Xinyan Lu: no unread cutoff,see sync_redis above
-        return
-        if not r:
-            r = redis.Redis(connection_pool=settings.REDIS_STORY_HASH_POOL)
-        # if not r2:
-        #     r2 = redis.Redis(connection_pool=settings.REDIS_STORY_HASH_POOL2)
-        if self.id:
-            r.srem('F:%s' % self.story_feed_id, self.story_hash)
-            # r2.srem('F:%s' % self.story_feed_id, self.story_hash)
-            r.zrem('zF:%s' % self.story_feed_id, self.story_hash)
-            # r2.zrem('zF:%s' % self.story_feed_id, self.story_hash)
-
-    @classmethod
-    def sync_feed_redis(cls, story_feed_id):
-        # Disabled by Xinyan Lu: no unread cutoff
-        return
-        r = redis.Redis(connection_pool=settings.REDIS_STORY_HASH_POOL)
-        # r2 = redis.Redis(connection_pool=settings.REDIS_STORY_HASH_POOL2)
-        UNREAD_CUTOFF = datetime.datetime.now() - datetime.timedelta(
-            days=settings.DAYS_OF_UNREAD_NEW)
-        feed = Feed.get_by_id(story_feed_id)
-        stories = cls.objects.filter(
-            story_feed_id=story_feed_id, story_date__gte=UNREAD_CUTOFF)
-        r.delete('F:%s' % story_feed_id)
-        # r2.delete('F:%s' % story_feed_id)
-        r.delete('zF:%s' % story_feed_id)
-        # r2.delete('zF:%s' % story_feed_id)
-
-        logging.info("   ---> [%-30s] ~FMSyncing ~SB%s~SN stories to redis" %
-                     (feed and feed.title[:30] or story_feed_id, stories.count()))
-        p = r.pipeline()
-        # p2 = r2.pipeline()
-        for story in stories:
-            story.sync_redis(r=p)
-        p.execute()
-        # p2.execute()
-
-    def count_comments(self):
-        from apps.social.models import MSharedStory
-        params = {
-            'story_guid': self.story_guid,
-            'story_feed_id': self.story_feed_id,
-        }
-        comments = MSharedStory.objects.filter(
-            has_comments=True, **params).only('user_id')
-        shares = MSharedStory.objects.filter(**params).only('user_id')
-        self.comment_count = comments.count()
-        self.comment_user_ids = [c['user_id'] for c in comments]
-        self.share_count = shares.count()
-        self.share_user_ids = [s['user_id'] for s in shares]
-        self.save()
-
     def extract_image_urls(self, force=False):
         '''
         extract images from story_content
@@ -1530,8 +1377,7 @@ class MStory(mongo.Document):
             return
 
         images = soup.findAll('img')
-        if not images:
-            return
+        if not images: return
 
         image_urls = []
         for image in images:
@@ -1542,8 +1388,7 @@ class MStory(mongo.Document):
                 continue
             image_urls.append(image_url)
 
-        if not image_urls:
-            return
+        if not image_urls: return
 
         self.image_urls = image_urls
         return self.image_urls
@@ -1558,8 +1403,6 @@ class MStory(mongo.Document):
         if not force and len(self.image_ids)==len(self.image_urls):
             return self.image_ids
 
-        
-        
         def _1(image_url):
             if not image_url:
                 return 'NE' # image_url == None
@@ -1613,7 +1456,6 @@ class MStory(mongo.Document):
         return image_ids
 
 
-
     def fetch_original_text(self, force=False, request=None):
         '''
         according to the story.story_permalink,
@@ -1623,14 +1465,15 @@ class MStory(mongo.Document):
         original_text_z = self.original_text_z
 
         if not original_text_z or force:
-                feed = Feed.get_by_id(self.story_feed_id)
-                ti = TextImporter(self, feed=feed, request=request)
+                ti = TextImporter(self, request=request)
                 original_text = ti.fetch()
         else:
             logging.user(request, "~FYFetching ~FGoriginal~FY story text, ~SBfound.")
             original_text = zlib.decompress(original_text_z)
 
         return original_text
+
+
 
 
 class MFrozenStory(mongo.Document):
@@ -1651,12 +1494,10 @@ class MFrozenStory(mongo.Document):
     story_permalink = mongo.StringField()
     story_guid = mongo.StringField()
     story_hash = mongo.StringField()
-    image_urls = mongo.ListField(
-        mongo.StringField(max_length=1024))
+    image_urls = mongo.ListField(mongo.StringField(max_length=1024))
     # Add by Xinyan Lu : support images storage
     image_ids = mongo.ListField(mongo.StringField())
-    story_tags = mongo.ListField(
-        mongo.StringField(max_length=250))
+    story_tags = mongo.ListField(mongo.StringField(max_length=250))
     comment_count = mongo.IntField()
     comment_user_ids = mongo.ListField(mongo.IntField())
     share_count = mongo.IntField()
@@ -1674,7 +1515,7 @@ class MFrozenStory(mongo.Document):
         'cascade': False,
     }
 
-    def __init__(self,mstory):
+    def __init__(self, mstory):
         super(MFrozenStory,self).__init__()
         if not isinstance(mstory,MStory):
             raise TypeError('Not a MStory object')
@@ -1758,7 +1599,8 @@ class MFrozenStory(mongo.Document):
 
 class MFetchHistory(mongo.Document):
 
-    # 对于每个feed_id都有三个域
+    # for each feed_id, there is three fields.
+    # but the push_history is not used by us
 
     feed_id = mongo.IntField(unique=True)
     feed_fetch_history = mongo.DynamicField()
@@ -1803,7 +1645,8 @@ class MFetchHistory(mongo.Document):
                 }
         return history
 
-    # 以feed_id为主键，再以fetch_type为类型，将[[date, code, message]]的抓取历史记录到fetch_history中
+    # Get the fetch and push history for a specific feed_id.
+    # and then add [[date, code, message]] into the list of fetch_type
     @classmethod
     def add(cls, feed_id, fetch_type, date=None, message=None, code=None, exception=None):
         if not date:
@@ -1842,27 +1685,6 @@ class MFetchHistory(mongo.Document):
             # RStats.add('feed_fetch')
 
         return cls.feed(feed_id, fetch_history=fetch_history)
-
-
-def rewrite_folders(folders, original_feed, duplicate_feed):
-    new_folders = []
-
-    for k, folder in enumerate(folders):
-        if isinstance(folder, int):
-            if folder == duplicate_feed.pk:
-                # logging.info("              ===> Rewrote %s'th item: %s" % (k+1, folders))
-                new_folders.append(original_feed.pk)
-            else:
-                new_folders.append(folder)
-        elif isinstance(folder, dict):
-            for f_k, f_v in folder.items():
-                new_folders.append(
-                    {f_k: rewrite_folders(f_v, original_feed, duplicate_feed)})
-
-    return new_folders
-
-
-
 
 
 class MImage(mongo.Document):

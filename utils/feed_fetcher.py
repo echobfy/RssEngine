@@ -28,7 +28,8 @@ def mtime(ttime):
     return datetime.datetime.fromtimestamp(time.mktime(ttime))
     
 
-# 根据feed_address 去抓取页面返回一个字典类型
+# According to the feed_address, FetchFeed uses feedparser to 
+# download the feed. and return a dict about the feed.
 class FetchFeed:
     def __init__(self, feed_id, options):
         self.feed = Feed.get_by_id(feed_id)
@@ -37,7 +38,7 @@ class FetchFeed:
     
     @timelimit(150)
     def fetch(self):
-        """ 
+        """     
         Uses feedparser to download the feed. Will be parsed later.
         """
         start = time.time()
@@ -52,14 +53,15 @@ class FetchFeed:
         modified = self.feed.last_modified.utctimetuple()[:7] if self.feed.last_modified else None
         address = self.feed.feed_address
         
-        # 如果强制去抓，或者概率小于1%的时候，不要设置modified字段和etag字段，表明获取新文档
+        # If is forced or random is less than 1%, set modified = None and etag = None,
+        # means it will fetch new
         if (self.options.get('force') or random.random() <= .01):
             modified = None
             etag = None
             address = cache_bust_url(address)
             logging.debug(u'   ---> [%-30s] ~FBForcing fetch: %s' % (
                           self.feed.title[:30], address))
-        # 或者曾经没抓过的，而且这个feed也不是好的
+        # If this feed_id in not fetched once before or not known_good
         elif (not self.feed.fetched_once or not self.feed.known_good):
             modified = None
             etag = None
@@ -72,15 +74,6 @@ class FetchFeed:
                           's' if self.feed.num_subscribers != 1 else '',
                           self.feed.permalink,
                      ))
-        if self.options.get('feed_xml'):
-            logging.debug(u'   ---> [%-30s] ~FM~BKFeed has been fat pinged. Ignoring fat: %s' % (
-                          self.feed.title[:30], len(self.options.get('feed_xml'))))
-        
-        if self.options.get('fpf'):
-            self.fpf = self.options.get('fpf')
-            logging.debug(u'   ---> [%-30s] ~FM~BKFeed fetched in real-time with fat ping.' % (
-                          self.feed.title[:30]))
-            return FEED_OK, self.fpf
 
         try:
             self.fpf = feedparser.parse(address,
@@ -91,6 +84,10 @@ class FetchFeed:
             logging.debug(u'   ***> [%-30s] ~FR%s, turning off headers.' % 
                           (self.feed.title[:30], e))
             self.fpf = feedparser.parse(address, agent=USER_AGENT)
+        except (TypeError, ValueError, KeyError, EOFError), e:
+            logging.debug(u'   ***> [%-30s] ~FR%s fetch failed: %s.' % 
+                          (self.feed.title[:30], e))
+            return FEED_ERRHTTP, None
             
         logging.debug(u'   ---> [%-30s] ~FYFeed fetch in ~FM%.4ss' % (
                       self.feed.title[:30], time.time() - start))
@@ -127,8 +124,6 @@ class ProcessFeed:
         
         ret_values = dict(new=0, updated=0, same=0, error=0)
 
-        # logging.debug(u' ---> [%d] Processing %s' % (self.feed.id, self.feed.feed_title))
-
         if hasattr(self.fpf, 'status'):
             if self.options['verbose']:
                 if self.fpf.bozo and self.fpf.status != 304:
@@ -137,7 +132,7 @@ class ProcessFeed:
                                   self.fpf.bozo_exception,
                                   len(self.fpf.entries)))
                     
-            if self.fpf.status == 304: # 304代表资源未发生变化
+            if self.fpf.status == 304:                  # 304 stands for resource not modified
                 self.feed = self.feed.save()
                 self.feed.save_feed_history(304, "Not modified")
                 return FEED_SAME, ret_values
@@ -192,8 +187,8 @@ class ProcessFeed:
                 self.feed = self.feed.save()
                 return FEED_ERRPARSE, ret_values
                 
-        # 如果该feed已经改变了，或者这是第一次抓取该feed
-        # 保存其中的etag和last_modified 
+        # the feed has changed (or it is the first time we parse it)
+        # saving the etag and last_modified fields
         self.feed.etag = self.fpf.get('etag')
         if self.feed.etag:
             self.feed.etag = self.feed.etag[:255]
@@ -329,7 +324,6 @@ class Dispatcher:
             feed_fetch_duration = None
             feed_process_duration = None
             page_duration = None
-            icon_duration = None
             feed_code = None
             ret_entries = None
             start_time = time.time()
@@ -337,31 +331,9 @@ class Dispatcher:
             try:
                 feed = self.refresh_feed(feed_id)
                 
-                skip = False
-                if self.options.get('fake'):
-                    skip = True
-                    weight = "-"
-                    quick = "-"
-                    rand = "-"
-                elif (self.options.get('quick') and not self.options['force'] and 
-                      feed.known_good and feed.fetched_once and not feed.is_push):
-                    weight = feed.stories_last_month * feed.num_subscribers
-                    random_weight = random.randint(1, max(weight, 1))
-                    quick = float(self.options.get('quick', 0))
-                    rand = random.random()
-                    if random_weight < 100 and rand < quick:
-                        skip = True
-                if skip:
-                    logging.debug('   ---> [%-30s] ~BGFaking fetch, skipping (%s/month, %s subs, %s < %s)...' % (
-                        feed.title[:30],
-                        weight,
-                        feed.num_subscribers,
-                        rand, quick))
-                    continue
-                
-                # 创建FetchFeed类
                 ffeed = FetchFeed(feed_id, self.options)
-                # fetch函数会去取得feed_address的页面，ret_feed表示状态，fetched_feed表示结果
+                # fetch method will get the html about feed_address
+                # ret_feed stands for status, and fetched_feed stands for result.
                 ret_feed, fetched_feed = ffeed.fetch()
                 feed_fetch_duration = time.time() - start_duration
                 
@@ -380,7 +352,6 @@ class Dispatcher:
                         if self.options['force'] or random.random() <= 0.02:
                             logging.debug('   ---> [%-30s] ~FBPerforming feed cleanup...' % (feed.title[:30],))
                             start_cleanup = time.time()
-                            feed.sync_redis()
                             logging.debug('   ---> [%-30s] ~FBDone with feed cleanup. Took ~SB%.4s~SN sec.' % (feed.title[:30], time.time() - start_cleanup))
                         try:
                             self.count_unreads_for_subscribers(feed)
@@ -539,6 +510,7 @@ class Dispatcher:
         self.feeds_queue = feeds_queue
         self.feeds_count = feeds_count
             
+    # if the single_threaded option is ture, run in this thread. 
     def run_jobs(self):
         if self.options['single_threaded']:
             return self.process_feed_wrapper(self.feeds_queue[0])

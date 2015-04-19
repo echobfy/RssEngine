@@ -17,8 +17,10 @@ import gzip, cStringIO
 class TextImporter:
 
     '''
-    according to the story_permalink, the urllib2 go to fetch 
-    the html document, and parse the content of the document.
+    According to the story_permalink, the urllib2 go to fetch 
+    the html document, and parse the content of the document
+    and store it.
+
     '''
 
     def __init__(self, story, request=None):
@@ -44,10 +46,7 @@ class TextImporter:
         except requests.exceptions.TooManyRedirects:
             logging.user(self.request, "~SN~FRFailed~FY to fetch ~FGoriginal text~FY: too many redirects")
             resp = None 
-   
-        if not resp:
-            return
-
+        if not resp: return
 
         try:
             text = resp.text
@@ -66,12 +65,11 @@ class TextImporter:
         except readability.Unparseable:
             return
 
-
-        try:
-            title = original_text_doc.title()
-        except TypeError:
-            title = ""
-        url = resp.url
+        # try:
+        #     title = original_text_doc.title()
+        # except TypeError:
+        #     title = ""
+        # url = resp.url
         
         if content:
             if self.story and not skip_save:

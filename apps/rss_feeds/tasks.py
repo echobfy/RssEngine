@@ -101,6 +101,8 @@ class TaskFeeds(Task):
                                 r.zcard('tasked_feeds')))
             cp3 = time.time()
 
+            # If the system is halt or stop, the time of next_scheduled_update will earlier than now.
+            # and the feeds whose next_scheduled_update is earlier than now is supposed to schedule now.
             old = now - datetime.timedelta(days=1)
             old_feeds = Feed.objects.filter(
                 next_scheduled_update__lte=old,
