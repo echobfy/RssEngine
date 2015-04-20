@@ -161,14 +161,13 @@ class UpdateFeeds(Task):
                 # if feed is null or feed.pk != feed_pk, then delete the feed_pk from tasked_feeds
                 # otherwise delete the feed_pk after the fetch is over.
                 if not feed or feed.pk != int(feed_pk):
-                    logging.info(" ---> ~FRRemoving feed_id %s from tasked_feeds queue, points to %s..." % (feed_pk, feed and feed.pk))
+                    logging.info(" ---> ~FRRemoving feed_id %s from tasked_feeds queue, points to %s..." % 
+                                        (feed_pk, feed and feed.pk))
                     r.zrem('tasked_feeds', feed_pk)
                 if feed:
                     feed.update(**options)
         except Exception, e:
-            logging.error(str(e)+\
-                traceback.format_exc()+'\n'+\
-                'error from:  UpdateFeeds\n')
+            logging.error(str(e) + traceback.format_exc() + '\n' + 'error from:  UpdateFeeds\n')
            # if settings.SEND_ERROR_MAILS:
                 #mail_admins("Error in UpdateFeeds",str(e)+'\n'+traceback.format_exc())
 
@@ -251,7 +250,9 @@ class FreezeFeeds(Task):
     max_retries = 0
     ignore_result = False
 
-    def run(self,feed_pk,**kwargs):
+    def run(self, feed_pk, **kwargs):
         from apps.rss_feeds.models import MStory
         MStory.freeze_feed(feed_pk)
         logging.info('---> ~FYProcess freeze feed %d done!~FW'%feed_pk)
+
+

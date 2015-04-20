@@ -50,7 +50,9 @@ def _extract_date_tuples(date):
     
     return parsed_date, date_tuple, today_tuple, yesterday_tuple
 
-# 在处理每个feed页面中的entry时，先调用该函数
+# execute the method before deal with every entry
+# published_parsed: the date this entry was first published
+# updated_parsed  : the date this entry was last updated
 def pre_process_story(entry):
     publish_date = entry.get('published_parsed') or entry.get('updated_parsed')
     if publish_date:
@@ -69,13 +71,6 @@ def pre_process_story(entry):
     if entry['published'] > datetime.datetime.now() + datetime.timedelta(days=1):
         entry['published'] = datetime.datetime.now()
     
-    # entry_link = entry.get('link') or ''
-    # protocol_index = entry_link.find("://")
-    # if protocol_index != -1:
-    #     entry['link'] = (entry_link[:protocol_index+3]
-    #                     + urlquote(entry_link[protocol_index+3:]))
-    # else:
-    #     entry['link'] = urlquote(entry_link)
     if isinstance(entry.get('guid'), dict):
         entry['guid'] = unicode(entry['guid'])
 

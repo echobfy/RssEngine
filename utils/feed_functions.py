@@ -84,7 +84,7 @@ def levenshtein_distance(first, second):
     for i in range(first_length):
        distance_matrix[i][0] = i
     for j in range(second_length):
-       distance_matrix[0][j]=j
+       distance_matrix[0][j] = j
     for i in xrange(1, first_length):
         for j in range(1, second_length):
             deletion = distance_matrix[i-1][j] + 1

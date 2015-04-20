@@ -229,17 +229,6 @@ class Feed(models.Model):
         else:
             return [Feed.get_by_id(f) for f in feed_ids][:limit]
 
-    @classmethod
-    def autocomplete(self, prefix, limit=5):
-        results = SearchQuerySet().autocomplete(
-            address=prefix).order_by('-num_subscribers')[:limit]
-
-        if len(results) < limit:
-            results += SearchQuerySet().autocomplete(
-                title=prefix).order_by('-num_subscribers')[:limit - len(results)]
-
-        return list(set([int(f.pk) for f in results]))
-
     # 根据feed_address, feed_link来查找相关的feed，如果没有则新建
     @classmethod
     def find_or_create(cls, feed_address, feed_link, *args, **kwargs):
@@ -265,7 +254,6 @@ class Feed(models.Model):
                 user_id, alert_id = match.groups()
                 self.feed_address = "http://www.google.com/alerts/feeds/%s/%s" % (
                     user_id, alert_id)
-
 
     @classmethod
     def schedule_feed_fetches_immediately(cls, feed_ids):
@@ -666,10 +654,12 @@ class Feed(models.Model):
 
         return feed
 
-
+    # stories is a list of story which is in feed_address html
+    # existing_stories is dict {story_hash: story instance}
     def add_update_stories(self, stories, existing_stories, verbose=False):
         ret_values = dict(new=0, updated=0, same=0, error=0)
         error_count = self.error_count
+        new_story_hashes = [s.get('story_hash') for s in stories]
 
         if settings.DEBUG or verbose:
             logging.debug("   ---> [%-30s] ~FBChecking ~SB%s~SN new/updated against ~SB%s~SN stories" % (
@@ -679,11 +669,17 @@ class Feed(models.Model):
 
         @timelimit(2)
         def _1(story, story_content, existing_stories):
-            existing_story, story_has_changed = self._exists_story(
-                story, story_content, existing_stories)
+            existing_story, story_has_changed = self._exists_story(story, story_content, 
+                                                                    existing_stories, new_story_hashes)
             return existing_story, story_has_changed
 
+        # for each story in feed_address html
         for story in stories:
+            if verbose:
+                logging.debug("   ---> [%-30s] ~FBChecking ~SB%s~SN / ~SB%s" % (
+                              self.title[:30],
+                              story.get('title'),
+                              story.get('guid')))
             if not story.get('title'):
                 continue
 
@@ -691,19 +687,18 @@ class Feed(models.Model):
             if error_count:
                 story_content = strip_comments__lxml(story_content)
             else:
-                story_content = strip_comments(story_content)
-            story_tags = self.get_tags(story)
-            story_link = self.get_permalink(story)
+                story_content = strip_comments(story_content)   # remove the comments
+            story_tags = self.get_tags(story)                   # get the tags of the story
+            story_link = self.get_permalink(story)              # get the link of the story
 
             try:
-                existing_story, story_has_changed = _1(
-                    story, story_content, existing_stories)
+                existing_story, story_has_changed = _1(story, story_content, existing_stories)
             except TimeoutError, e:
-                logging.debug(
-                    '   ---> [%-30s] ~SB~FRExisting story check timed out...' % (unicode(self)[:30]))
+                logging.debug('   ---> [%-30s] ~SB~FRExisting story check timed out...' % (unicode(self)[:30]))
                 existing_story = None
                 story_has_changed = False
 
+            # If the story is new.
             if existing_story is None:
                 if settings.DEBUG and False:
                     logging.debug('   ---> New story in feed (%s - %s): %s' %
@@ -726,60 +721,37 @@ class Feed(models.Model):
                     #=========================
                     #=Added by SongJun:      =
                     #==fetch_original_text   =
-                    #==fetch_reference_images=
                     #=========================
                     original_text = s.fetch_original_text()
                     soup = BeautifulSoup(str(original_text))
                     imgs = soup.findAll('img')
                     for img in imgs:
-                        imgurl=img.get('src')
-                        # Add by XY: imgurl may be None
-                        if not imgurl:
-                            continue
+                        imgurl = img.get('src')
+                        if not imgurl: continue
                         if imgurl and len(imgurl) >= 1024:
                             continue
                         if not(imgurl in s.image_urls):
                             s.image_urls.append(imgurl)
-                    s.fetch_reference_images()
                     #=========================
                 except (IntegrityError, OperationError), e:
                     ret_values['error'] += 1
-                    # Commented By XY Lu: too many logs
-                    # if settings.DEBUG:
-                    #     logging.info('   ---> [%-30s] ~SN~FRIntegrityError on new story: %s - %s' % (
-                    #         self.feed_title[:30], story.get('guid'), e))
-                # =========================================
-                # = Send the story id to D-Ocean  SongJun =
-                # =========================================
-                if not s.id==None:
-                    try:
-                        DOr = redis.Redis(connection_pool=settings.D_OCEAN_REDIS_POOL)
-                        DOr.lpush('story_id_list',s.id)
-                    except Exception, e:
-                        logging.error(str(e)+\
-                            traceback.format_exc()+'\n'+\
-                            'error from:  add_update_stories\n')
-                        if settings.SEND_ERROR_MAILS:
-                            mail_admins("Error in add_update_stories",str(e)+'\n'+traceback.format_exc())
+                    if settings.DEBUG:
+                        logging.info('   ---> [%-30s] ~SN~FRIntegrityError on new story: %s - %s' % (
+                            self.feed_title[:30], story.get('guid'), e))
 
+            # If the story is existing, and update it.
             elif existing_story and story_has_changed:
-                # update story
                 original_content = None
                 try:
-                    if existing_story and existing_story.id:
+                    if existing_story and existing_story.id: # id is ObjectId
                         try:
-                            existing_story = MStory.objects.get(
-                                id=existing_story.id)
+                            existing_story = MStory.objects.get(id=existing_story.id)
                         except ValidationError:
-                            existing_story, _ = MStory.find_story(
-                                existing_story.story_feed_id,
-                                existing_story.id,
-                                original_only=True)
+                            existing_story, _ = MStory.find_story(existing_story.story_feed_id,
+                                                                    existing_story.id)
                     elif existing_story and existing_story.story_guid:
-                        existing_story, _ = MStory.find_story(
-                            existing_story.story_feed_id,
-                            existing_story.story_guid,
-                            original_only=True)
+                        existing_story, _ = MStory.find_story(existing_story.story_feed_id,
+                                                                existing_story.story_guid)
                     else:
                         raise MStory.DoesNotExist
                 except (MStory.DoesNotExist, OperationError), e:
@@ -788,43 +760,28 @@ class Feed(models.Model):
                         logging.info('   ---> [%-30s] ~SN~FROperation on existing story: %s - %s' % (
                             self.feed_title[:30], story.get('guid'), e))
                     continue
-                if existing_story.story_original_content_z:
-                    original_content = zlib.decompress(existing_story.story_original_content_z)
-                elif existing_story.story_content_z:
-                    original_content = zlib.decompress(existing_story.story_content_z)
-                # print 'Type: %s %s' % (type(original_content),
-                # type(story_content))
+
                 if story_content and len(story_content) > 10:
                     story_content_diff = htmldiff(
                         unicode(original_content), unicode(story_content))
                 else:
                     story_content_diff = original_content
-                # logging.debug("\t\tDiff: %s %s %s" % diff.getStats())
-                # logging.debug("\t\tDiff content: %s" % diff.getDiff())
-                # if existing_story.story_title != story.get('title'):
-                #    logging.debug('\tExisting title / New: : \n\t\t- %s\n\t\t- %s' % (existing_story.story_title, story.get('title')))
                 if existing_story.story_guid != story.get('guid'):
-                    self.update_story_with_new_guid(
-                        existing_story, story.get('guid'))
+                    self.update_story_with_new_guid(existing_story, story.get('guid'))
 
                 if settings.DEBUG and False:
-                    logging.debug(
-                        '- Updated story in feed (%s - %s): %s / %s' %
-                        (self.feed_title, story.get('title'), len(story_content_diff), len(story_content)))
+                    logging.debug('- Updated story in feed (%s - %s): %s / %s' %
+                                (self.feed_title, story.get('title'), len(story_content_diff), len(story_content)))
 
                 existing_story.story_feed = self.pk
                 existing_story.story_title = story.get('title')
+
                 existing_story.story_content = story_content_diff
-                existing_story.story_latest_content = story_content
-                existing_story.story_original_content = original_content
+
                 existing_story.story_author_name = story.get('author')
                 existing_story.story_permalink = story_link
                 existing_story.story_guid = story.get('guid')
                 existing_story.story_tags = story_tags
-                # Do not allow publishers to change the story date once a story is published.
-                # Leads to incorrect unread story counts.
-                # existing_story.story_date = story.get('published') # No,
-                # don't
                 existing_story.extract_image_urls()
 
                 try:
@@ -842,45 +799,19 @@ class Feed(models.Model):
                             self.feed_title[:30], story.get('title')[:30]))
             else:
                 ret_values['same'] += 1
-                # logging.debug("Unchanged story: %s " % story.get('title'))
+
         return ret_values
+
 
     def update_story_with_new_guid(self, existing_story, new_story_guid):
 
-        old_hash = existing_story.story_hash
         new_hash = MStory.ensure_story_hash(new_story_guid, self.pk)
-
-    @property
-    def story_cutoff(self):
-        cutoff = 500
-        if self.active_subscribers <= 0:
-            cutoff = 50
-        elif self.active_premium_subscribers < 1:
-            cutoff = 100
-        elif self.active_premium_subscribers <= 2:
-            cutoff = 200000
-        elif self.active_premium_subscribers <= 5:
-            cutoff = 200000
-        elif self.active_premium_subscribers <= 10:
-            cutoff = 200000
-        elif self.active_premium_subscribers <= 15:
-            cutoff = 200000
-        elif self.active_premium_subscribers <= 20:
-            cutoff = 200000
-
-        if self.active_subscribers and self.stories_last_month < 5:
-            cutoff /= 2
-        if self.active_premium_subscribers <= 1 and self.stories_last_month <= 1:
-            cutoff /= 2
-
-        return cutoff
 
     def freeze_feed(self,verbose=True):
         MStory.freeze_feed(feed=self,verbose=verbose)
 
     def get_stories(self, offset=0, limit=25, force=False):
-        stories_db = MStory.objects(
-            story_feed_id=self.pk)[offset:offset + limit]
+        stories_db = MStory.objects(story_feed_id=self.pk)[offset:offset + limit]
         stories = self.format_stories(stories_db, self.pk)
 
         return stories
@@ -938,10 +869,6 @@ class Feed(models.Model):
         story['story_permalink'] = story_db.story_permalink
         story['image_urls'] = story_db.image_urls
         story['story_feed_id'] = feed_id or story_db.story_feed_id
-        story['comment_count'] = story_db.comment_count if hasattr(story_db, 'comment_count') else 0
-        story['comment_user_ids'] = story_db.comment_user_ids if hasattr(story_db, 'comment_user_ids') else []
-        story['share_count'] = story_db.share_count if hasattr(story_db, 'share_count') else 0
-        story['share_user_ids'] = story_db.share_user_ids if hasattr(story_db, 'share_user_ids') else []
         story['guid_hash'] = story_db.guid_hash if hasattr(story_db, 'guid_hash') else None
         if hasattr(story_db, 'source_user_id'):
             story['source_user_id'] = story_db.source_user_id
@@ -963,6 +890,7 @@ class Feed(models.Model):
 
         return story
 
+    # get the details of the categories for the entry
     def get_tags(self, entry):
         fcat = []
         if entry.has_key('tags'):
@@ -1000,103 +928,100 @@ class Feed(models.Model):
             link = entry.get('id')
         return link
 
-    def _exists_story(self, story=None, story_content=None, existing_stories=None):
+    # a story, and the stroy_content
+    # existing_stories is including stories dict, like the form {story hash: story instance}
+    def _exists_story(self, story, story_content, existing_stories, new_story_hashes):
         story_in_system = None
         story_has_changed = False
         story_link = self.get_permalink(story)
-        existing_stories_guids = existing_stories.keys()
+        existing_stories_hashes = existing_stories.keys()
+        story_pub_date = story.get('published')
 
         for existing_story in existing_stories.values():
             content_ratio = 0
 
-            if 'story_latest_content_z' in existing_story:
-                existing_story_content = unicode(
-                    zlib.decompress(existing_story.story_latest_content_z))
-            elif 'story_latest_content' in existing_story:
-                existing_story_content = existing_story.story_latest_content
-            elif 'story_content_z' in existing_story:
-                existing_story_content = unicode(
-                    zlib.decompress(existing_story.story_content_z))
+            if isinstance(existing_story.id, unicode):
+                existing_story.story_guid = existing_story.id
+            
+            if story.get('story_hash') == existing_story.story_hash:
+                story_in_system = existing_story
+            elif (story.get('story_hash') in existing_stories_hashes and 
+                story.get('story_hash') != existing_story.story_hash):
+                # Story already exists but is not this one
+                continue
+            elif (existing_story.story_hash in new_story_hashes and
+                  story.get('story_hash') != existing_story.story_hash):
+                  # Story coming up later
+                continue
+
+            if 'story_content_z' in existing_story:
+                existing_story_content = unicode(zlib.decompress(existing_story.story_content_z))
             elif 'story_content' in existing_story:
                 existing_story_content = existing_story.story_content
             else:
                 existing_story_content = u''
-
-            if isinstance(existing_story.id, unicode):
-                existing_story.story_guid = existing_story.id
-            if (story.get('guid') in existing_stories_guids and
-                story.get('guid') != existing_story.story_guid):
-                continue
-            elif story.get('guid') == existing_story.story_guid:
-                story_in_system = existing_story
-
+                
+                  
             # Title distance + content distance, checking if story changed
-            story_title_difference = abs(
-                levenshtein_distance(story.get('title'),
-                                     existing_story.story_title))
-
-            seq = difflib.SequenceMatcher(
-                None, story_content, existing_story_content)
-
+            story_title_difference = abs(levenshtein_distance(story.get('title'),
+                                                              existing_story.story_title))
+            
+            title_ratio = difflib.SequenceMatcher(None, story.get('title', ""),
+                                                  existing_story.story_title).ratio()
+            if title_ratio < .75: continue
+            
+            story_timedelta = existing_story.story_date - story_pub_date
+            if abs(story_timedelta.days) >= 1: continue
+            
+            seq = difflib.SequenceMatcher(None, story_content, existing_story_content)
+            
+            similiar_length_min = 1000
+            if (existing_story.story_permalink == story_link and 
+                existing_story.story_title == story.get('title')):
+                similiar_length_min = 20
+            
             if (seq
                 and story_content
-                and len(story_content) > 1000
+                and len(story_content) > similiar_length_min
                 and existing_story_content
-                and seq.real_quick_ratio() > .9
+                and seq.real_quick_ratio() > .9 
                 and seq.quick_ratio() > .95):
                 content_ratio = seq.ratio()
-
+                
             if story_title_difference > 0 and content_ratio > .98:
                 story_in_system = existing_story
                 if story_title_difference > 0 or content_ratio < 1.0:
-                    if settings.DEBUG and False:
-                        logging.debug(
-                            " ---> Title difference - %s/%s (%s): %s" %
-                            (story.get('title'), existing_story.story_title, story_title_difference, content_ratio))
+                    if settings.DEBUG:
+                        logging.debug(" ---> Title difference - %s/%s (%s): %s" % (story.get('title'), existing_story.story_title, story_title_difference, content_ratio))
                     story_has_changed = True
                     break
-
+            
             # More restrictive content distance, still no story match
             if not story_in_system and content_ratio > .98:
-                if settings.DEBUG and False:
-                    logging.debug(" ---> Content difference - %s/%s (%s): %s" %
-                                  (story.get('title'), existing_story.story_title, story_title_difference, content_ratio))
+                if settings.DEBUG:
+                    logging.debug(" ---> Content difference - %s/%s (%s): %s" % (story.get('title'), existing_story.story_title, story_title_difference, content_ratio))
                 story_in_system = existing_story
                 story_has_changed = True
                 break
-
+                
             if story_in_system and not story_has_changed:
                 if story_content != existing_story_content:
-                    if settings.DEBUG and False:
-                        logging.debug(" ---> Content difference - %s/%s" %
-                                      (story_content, existing_story_content))
+                    if settings.DEBUG:
+                        logging.debug(" ---> Content difference - %s (%s)/%s (%s)" % (story.get('title'), len(story_content), existing_story.story_title, len(existing_story_content)))
                     story_has_changed = True
                 if story_link != existing_story.story_permalink:
-                    if settings.DEBUG and False:
-                        logging.debug(" ---> Permalink difference - %s/%s" %
-                                      (story_link, existing_story.story_permalink))
+                    if settings.DEBUG:
+                        logging.debug(" ---> Permalink difference - %s/%s" % (story_link, existing_story.story_permalink))
                     story_has_changed = True
                 # if story_pub_date != existing_story.story_date:
                 #     story_has_changed = True
                 break
-
+                
+        
         # if story_has_changed or not story_in_system:
-        #     print 'New/updated story: %s' % (story),
+        #     print 'New/updated story: %s' % (story), 
         return story_in_system, story_has_changed
 
-
-
-    def queue_pushed_feed_xml(self, xml):
-        r = redis.Redis(connection_pool=settings.REDIS_FEED_POOL)
-        queue_size = r.llen("push_feeds")
-
-        if queue_size > 1000:
-            self.schedule_feed_fetch_immediately()
-        else:
-            logging.debug('   ---> [%-30s] [%s] ~FBQueuing pushed stories...' %
-                          (unicode(self)[:30], self.pk))
-            self.set_next_scheduled_update()
-            PushFeeds.apply_async(args=(self.pk, xml), queue='push_feeds')
 
 
 class MFeedPage(mongo.Document):
@@ -1135,28 +1060,19 @@ class MStory(mongo.Document):
 
     story_content = mongo.StringField()       
     story_content_z = mongo.BinaryField()
-    story_original_content = mongo.StringField()
-    story_original_content_z = mongo.BinaryField()
-    story_latest_content = mongo.StringField()
-    story_latest_content_z = mongo.BinaryField()
 
     original_text_z = mongo.BinaryField()               # the main body of story_permalink, and it's from 
                                                         # fetch_original_text and text_importer.py
     original_page_z = mongo.BinaryField()               # the html of story_permalink
 
-    story_content_type = mongo.StringField(max_length=255)
     story_author_name = mongo.StringField()
     story_permalink = mongo.StringField()
     story_guid = mongo.StringField()
-    story_hash = mongo.StringField()
-    image_urls = mongo.ListField(mongo.StringField(max_length=1024))
+    story_hash = mongo.StringField()                    # feed_id:hashlib.sha1(self.story_guid).hexdigest()[:6]
+    image_urls = mongo.ListField(mongo.StringField(max_length=1024)) # the list of image urls from story_content
 
     image_ids = mongo.ListField(mongo.StringField())
     story_tags = mongo.ListField(mongo.StringField(max_length=250))
-    comment_count = mongo.IntField()
-    comment_user_ids = mongo.ListField(mongo.IntField())
-    share_count = mongo.IntField()
-    share_user_ids = mongo.ListField(mongo.IntField())
 
     meta = {
         'collection': 'stories',
@@ -1200,6 +1116,10 @@ class MStory(mongo.Document):
         else:
             return ''
 
+    @classmethod
+    def guid_hash_unsaved(self, guid):
+        return hashlib.sha1(guid).hexdigest()[:6]
+
     @property
     def guid_hash(self):
         return hashlib.sha1(self.story_guid).hexdigest()[:6]
@@ -1208,9 +1128,12 @@ class MStory(mongo.Document):
     def feed_guid_hash(self):
         return "%s:%s" % (self.story_feed_id, self.guid_hash)
 
+    @classmethod
+    def feed_guid_hash_unsaved(cls, feed_id, guid):
+        return "%s:%s" % (feed_id, cls.guid_hash_unsaved(guid))
+
     def save(self, *args, **kwargs):
         story_title_max = MStory._fields['story_title'].max_length
-        story_content_type_max = MStory._fields['story_content_type'].max_length
         self.story_hash = self
         .feed_guid_hash
 
@@ -1220,16 +1143,8 @@ class MStory(mongo.Document):
         if self.story_content:
             self.story_content_z = zlib.compress(self.story_content)
             self.story_content = None
-        if self.story_original_content:
-            self.story_original_content_z = zlib.compress(self.story_original_content)
-            self.story_original_content = None
-        if self.story_latest_content:
-            self.story_latest_content_z = zlib.compress(self.story_latest_content)
-            self.story_latest_content = None
         if self.story_title and len(self.story_title) > story_title_max:
             self.story_title = self.story_title[:story_title_max]
-        if self.story_content_type and len(self.story_content_type) > story_content_type_max:
-            self.story_content_type = self.story_content_type[:story_content_type_max]
 
         super(MStory, self).save(*args, **kwargs)
 
@@ -1243,17 +1158,11 @@ class MStory(mongo.Document):
                             story_date=self.story_date,
                             db_id=str(self.id))
 
-        #Add by Xinyan Lu : fetch image on save
-        #self.fetch_reference_images()
-
         return self
 
     def delete(self, *args, **kwargs):
         super(MStory, self).delete(*args, **kwargs)
 
-    #Commented By Xinyan Lu : be careful on parameter 'cutoff'
-    # @classmethod
-    # def trim_feed(cls, cutoff, feed_id=None, feed=None, verbose=True):    
     #Modified By Xinyan Lu : support for MFrozenStory
     @classmethod
     def freeze_feed(cls, feed_id=None, feed=None, verbose=True):
@@ -1292,17 +1201,14 @@ class MStory(mongo.Document):
         print >>sys.stderr, '.'
         logging.debug("   ---> Frozen %d stories." % (frozen_num,))
         # if verbose:
-        #     existing_story_count = MStory.objects(
-        #         story_feed_id=feed_id).count()
+        #     existing_story_count = MStory.objects(story_feed_id=feed_id).count()
         #     logging.debug("   ---> Deleted %s stories, %s left." % (
-        #         extra_stories_count,
-        #         existing_story_count))
+        #         extra_stories_count, existing_story_count))
 
         return frozen_num
 
     @classmethod
-    def find_story(cls, story_feed_id, story_id, original_only=False):
-        from apps.social.models import MSharedStory
+    def find_story(cls, story_feed_id, story_id):
         original_found = False
         story_hash = cls.ensure_story_hash(story_id, story_feed_id)
 
@@ -1313,12 +1219,6 @@ class MStory(mongo.Document):
 
         if story:
             original_found = True
-        if not story and not original_only:
-            story = MSharedStory.objects.filter(story_feed_id=story_feed_id,
-                                                story_hash=story_hash).limit(1).first()
-        if not story and not original_only:
-            story = MStarredStory.objects.filter(story_feed_id=story_feed_id,
-                                                 story_hash=story_hash).limit(1).first()
 
         return story, original_found
 
@@ -1393,69 +1293,6 @@ class MStory(mongo.Document):
         self.image_urls = image_urls
         return self.image_urls
 
-
-    def fetch_reference_images(self,force=False):
-        if not self.id:
-            raise IOError('Need a story id, save the story first')
-        if not self.image_urls:
-            return None
-
-        if not force and len(self.image_ids)==len(self.image_urls):
-            return self.image_ids
-
-        def _1(image_url):
-            if not image_url:
-                return 'NE' # image_url == None
-
-            # Filter images by URL patterns
-            Filtered = False
-            for c in IMAGE_BLACKLIST_FILTERS:
-                if c.search(image_url):
-                    Filtered = True
-                    break
-                
-            if Filtered == True:
-                # logging.debug('Image Filtered: %s'%image_url)
-                return 'Filtered'
-
-            existing_image = MImage.get_by_url(image_url)
-            if existing_image:
-                existing_image.save_append_story(self)
-                # logging.debug('Image exists: %s'%image_url)
-                return str(existing_image.id)
-
-            imageid_or_code = 'NoneError'           
-            try:
-                image = MImage()
-                image.process(image_url,self)
-                image.save()
-                imageid_or_code = str(image.id)
-                # logging.user(None, ("~FYFetching ~FGreference~FY image from: %s" % str(image.id)))
-            except (IOError,AssertionError),e:
-                # record the error code
-                imageid_or_code = str(e)
-            except Exception,e:
-                imageid_or_code = 'OtherError'
-                logging.debug("Fetching image ~FY%s~FT with other error: ~FR%s~FT" % (image_url,str(e)))
-            finally:
-                return imageid_or_code
-
-        # jobs = [gevent.spawn(_1,image_url) for image_url in self.image_urls]
-        # gevent.joinall(jobs)
-        # image_ids = [job.value for job in jobs]
-
-        image_ids = [_1(image_url) for image_url in self.image_urls]
-        
-        self.image_ids = image_ids
-        
-        num_valid_images = len(filter(lambda x:len(x)>20,image_ids))
-        if num_valid_images > 0:
-            logging.debug("~FG%d~FT new images fetched." % num_valid_images)
-        
-        self.save()
-        return image_ids
-
-
     def fetch_original_text(self, force=False, request=None):
         '''
         according to the story.story_permalink,
@@ -1474,8 +1311,6 @@ class MStory(mongo.Document):
         return original_text
 
 
-
-
 class MFrozenStory(mongo.Document):
 
     '''A feed item (Frozen)'''
@@ -1484,12 +1319,7 @@ class MFrozenStory(mongo.Document):
     story_title = mongo.StringField(max_length=1024)
     story_content = mongo.StringField()
     story_content_z = mongo.BinaryField()
-    story_original_content = mongo.StringField()
-    story_original_content_z = mongo.BinaryField()
-    story_latest_content = mongo.StringField()
-    story_latest_content_z = mongo.BinaryField()
     original_text_z = mongo.BinaryField()
-    story_content_type = mongo.StringField(max_length=255)
     story_author_name = mongo.StringField()
     story_permalink = mongo.StringField()
     story_guid = mongo.StringField()
@@ -1498,10 +1328,6 @@ class MFrozenStory(mongo.Document):
     # Add by Xinyan Lu : support images storage
     image_ids = mongo.ListField(mongo.StringField())
     story_tags = mongo.ListField(mongo.StringField(max_length=250))
-    comment_count = mongo.IntField()
-    comment_user_ids = mongo.ListField(mongo.IntField())
-    share_count = mongo.IntField()
-    share_user_ids = mongo.ListField(mongo.IntField())
 
     meta = {
         'collection': 'stories_frozen',
@@ -1526,12 +1352,7 @@ class MFrozenStory(mongo.Document):
         self.story_title = mstory.story_title
         self.story_content = mstory.story_content
         self.story_content_z = mstory.story_content_z
-        self.story_original_content = mstory.story_original_content
-        self.story_original_content_z = mstory.story_original_content_z
-        self.story_latest_content = mstory.story_latest_content
-        self.story_latest_content_z = mstory.story_latest_content_z
         self.original_text_z = mstory.original_text_z
-        self.story_content_type = mstory.story_content_type
         self.story_author_name = mstory.story_author_name
         self.story_permalink = mstory.story_permalink
         self.story_guid = mstory.story_guid
@@ -1539,10 +1360,7 @@ class MFrozenStory(mongo.Document):
         self.image_urls = mstory.image_urls
         self.image_ids = mstory.image_ids
         self.story_tags = mstory.story_tags
-        self.comment_count = mstory.comment_count
-        self.comment_user_ids = mstory.comment_user_ids
-        self.share_count = mstory.share_count
-        self.share_user_ids = mstory.share_user_ids
+
         # save with the same mongodb ObjectID
         self.id = mstory.id
 
@@ -1554,19 +1372,8 @@ class MFrozenStory(mongo.Document):
         if self.story_content:
             self.story_content_z = zlib.compress(self.story_content)
             self.story_content = None
-        if self.story_original_content:
-            self.story_original_content_z = zlib.compress(
-                self.story_original_content)
-            self.story_original_content = None
-        if self.story_latest_content:
-            self.story_latest_content_z = zlib.compress(
-                self.story_latest_content)
-            self.story_latest_content = None
         # if self.story_title and len(self.story_title) > story_title_max:
         #     self.story_title = self.story_title[:story_title_max]
-        # if self.story_content_type and len(self.story_content_type) > story_content_type_max:
-        #     self.story_content_type = self.story_content_type[
-        #         :story_content_type_max]
         super(MFrozenStory, self).save(*args, **kwargs)
 
         #Add by Xinyan Lu : index on save

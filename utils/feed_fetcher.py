@@ -153,7 +153,6 @@ class ProcessFeed:
             if self.fpf.status >= 400:
                 logging.debug("   ---> [%-30s] ~SB~FRHTTP Status code: %s. Checking address..." % (self.feed.title[:30], self.fpf.status))
                 fixed_feed = None
-                # 如果feed不是好的话，尝试修复feed
                 if not self.feed.known_good:
                     fixed_feed, feed = self.feed.check_feed_link_for_feed_address()
                 if not fixed_feed:
@@ -211,58 +210,61 @@ class ProcessFeed:
         
         self.feed = self.feed.save()
 
+        # Determine if stories aren't valid and replace broken guids
+        # if guid is single among many entries:
+        #   if permalink also is single among many entries:
+        #       replace the guid with published
+        #   else if permalink is not:
+        #       replace the guid with permalink
+        guids_seen = set()
+        permalinks_seen = set()
+        for entry in self.fpf.entries:
+            guids_seen.add(entry.get('guid'))
+            permalinks_seen.add(Feed.get_permalink(entry))
+        guid_difference = len(guids_seen) != len(self.fpf.entries) # means guid is duplicated.
+        single_guid = len(guids_seen) == 1
+        replace_guids = single_guid and guid_difference # means guid is single but entries not.
+        permalink_difference = len(permalinks_seen) != len(self.fpf.entries)
+        single_permalink = len(permalinks_seen) == 1
+        replace_permalinks = single_permalink and permalink_difference
+        
         # Compare new stories to existing stories, adding and updating
         start_date = datetime.datetime.utcnow()
-        story_guids = []
+        story_hashes = []
         stories = []
         for entry in self.fpf.entries:
             story = pre_process_story(entry)
             if story.get('published') < start_date:
                 start_date = story.get('published')
+            if replace_guids:
+                if replace_permalinks:
+                    new_story_guid = unicode(story.get('published'))
+                    if self.options['verbose']:
+                        logging.debug(u'   ---> [%-30s] ~FBReplacing guid (%s) with timestamp: %s' % (
+                                      self.feed.title[:30],
+                                      story.get('guid'), new_story_guid))
+                    story['guid'] = new_story_guid
+                else:
+                    new_story_guid = Feed.get_permalink(story)
+                    if self.options['verbose']:
+                        logging.debug(u'   ---> [%-30s] ~FBReplacing guid (%s) with permalink: %s' % (
+                                      self.feed.title[:30],
+                                      story.get('guid'), new_story_guid))
+                    story['guid'] = new_story_guid
+            story['story_hash'] = MStory.feed_guid_hash_unsaved(self.feed.pk, story.get('guid'))
             stories.append(story)
-            story_guids.append(story.get('guid'))
+            story_hashes.append(story.get('story_hash'))
 
-        existing_stories = dict((s.story_guid, s) for s in MStory.objects(
-            # story_guid__in=story_guids,
-            story_date__gte=start_date,
-            story_feed_id=self.feed.pk
-        ).limit(max(int(len(story_guids)*1.5), 10)))
-
+        # find the existing_stories with story_hash in story_hashes.
+        existing_stories = dict((s.story_hash, s) for s in MStory.objects(
+            story_hash__in=story_hashes,
+            # story_date__gte=start_date,
+            # story_feed_id=self.feed.pk
+        ))
+        
         ret_values = self.feed.add_update_stories(stories, existing_stories,
-                                                  verbose=self.options['verbose'])
-
-        if (hasattr(self.fpf, 'feed') and 
-            hasattr(self.fpf.feed, 'links') and self.fpf.feed.links):
-            hub_url = None
-            self_url = self.feed.feed_address
-            for link in self.fpf.feed.links:
-                if link['rel'] == 'hub' and not hub_url:
-                    hub_url = link['href']
-                elif link['rel'] == 'self':
-                    self_url = link['href']
-            push_expired = False
-            if self.feed.is_push:
-                try:
-                    push_expired = self.feed.push.lease_expires < datetime.datetime.now()
-                except PushSubscription.DoesNotExist:
-                    self.feed.is_push = False
-            if (hub_url and self_url and not settings.DEBUG and
-                self.feed.active_subscribers > 0 and
-                (push_expired or not self.feed.is_push or self.options.get('force'))):
-                logging.debug(u'   ---> [%-30s] ~BB~FW%sSubscribing to PuSH hub: %s' % (
-                              self.feed.title[:30],
-                              "~SKRe-~SN" if push_expired else "", hub_url))
-                try:
-                    PushSubscription.objects.subscribe(self_url, feed=self.feed, hub=hub_url)
-                except TimeoutError:
-                    logging.debug(u'   ---> [%-30s] ~BB~FW~FRTimed out~FW subscribing to PuSH hub: %s' % (
-                                  self.feed.title[:30], hub_url))                    
-            elif (self.feed.is_push and 
-                  (self.feed.active_subscribers <= 0 or not hub_url)):
-                logging.debug(u'   ---> [%-30s] ~BB~FWTurning off PuSH, no hub found' % (
-                              self.feed.title[:30]))
-                self.feed.is_push = False
-                self.feed = self.feed.save()
+                                                  verbose=self.options['verbose'],
+                                                  updates_off=self.options['updates_off'])
         
         logging.debug(u'   ---> [%-30s] ~FYParsed Feed: %snew=%s~SN~FY %sup=%s~SN same=%s%s~SN %serr=%s~SN~FY total=~SB%s' % (
                       self.feed.title[:30], 
@@ -272,9 +274,7 @@ class ProcessFeed:
                       '~FR~SB' if ret_values['error'] else '', ret_values['error'],
                       len(self.fpf.entries)))
         self.feed.update_all_statistics(full=bool(ret_values['new']), force=self.options['force'])
-        if ret_values['new']:
-            self.feed.trim_feed()
-            self.feed.expire_redis()
+
         self.feed.save_feed_history(200, "OK")
         
         if self.options['verbose']:
@@ -282,8 +282,6 @@ class ProcessFeed:
                           self.feed.title[:30], time.time() - start))
         
         return FEED_OK, ret_values
-
-
 
 
 class Dispatcher:
@@ -349,17 +347,6 @@ class Dispatcher:
                             feed.known_good = True
                             feed.fetched_once = True
                             feed = feed.save()
-                        if self.options['force'] or random.random() <= 0.02:
-                            logging.debug('   ---> [%-30s] ~FBPerforming feed cleanup...' % (feed.title[:30],))
-                            start_cleanup = time.time()
-                            logging.debug('   ---> [%-30s] ~FBDone with feed cleanup. Took ~SB%.4s~SN sec.' % (feed.title[:30], time.time() - start_cleanup))
-                        try:
-                            self.count_unreads_for_subscribers(feed)
-                        except TimeoutError:
-                            logging.debug('   ---> [%-30s] Unread count took too long...' % (feed.title[:30],))
-                        if self.options['verbose']:
-                            logging.debug(u'   ---> [%-30s] ~FBTIME: unread count in ~FM%.4ss' % (
-                                          feed.title[:30], time.time() - start))
             except urllib2.HTTPError, e:
                 logging.debug('   ---> [%-30s] ~FRFeed throws HTTP error: ~SB%s' % (unicode(feed_id)[:30], e.fp.read()))
                 feed.save_feed_history(e.code, e.msg, e.fp.read())
@@ -383,10 +370,6 @@ class Dispatcher:
                 feed.save_feed_history(500, "Error", tb)
                 feed_code = 500
                 fetched_feed = None
-                # mail_feed_error_to_admin(feed, e, local_vars=locals())
-                if (not settings.DEBUG and hasattr(settings, 'RAVEN_CLIENT') and
-                    settings.RAVEN_CLIENT):
-                    settings.RAVEN_CLIENT.captureException()
 
             if not feed_code:
                 if ret_feed == FEED_OK:
@@ -429,30 +412,6 @@ class Dispatcher:
                     feed.save_page_history(550, "Page Error", tb)
                     fetched_feed = None
                     page_data = None
-                    # mail_feed_error_to_admin(feed, e, local_vars=locals())
-                    if (not settings.DEBUG and hasattr(settings, 'RAVEN_CLIENT') and
-                        settings.RAVEN_CLIENT):
-                        settings.RAVEN_CLIENT.captureException()
-
-                feed = self.refresh_feed(feed.pk)
-                logging.debug(u'   ---> [%-30s] ~FYFetching icon: %s' % (feed.title[:30], feed.feed_link))
-                icon_importer = IconImporter(feed, page_data=page_data, force=self.options['force'])
-                try:
-                    icon_importer.save()
-                    icon_duration = time.time() - start_duration
-                except TimeoutError, e:
-                    logging.debug('   ---> [%-30s] ~FRIcon fetch timed out...' % (feed.title[:30]))
-                    feed.save_page_history(556, 'Timeout', '')
-                except Exception, e:
-                    logging.debug('[%d] ! -------------------------' % (feed_id,))
-                    tb = traceback.format_exc()
-                    logging.error(tb)
-                    logging.debug('[%d] ! -------------------------' % (feed_id,))
-                    # feed.save_feed_history(560, "Icon Error", tb)
-                    # mail_feed_error_to_admin(feed, e, local_vars=locals())
-                    if (not settings.DEBUG and hasattr(settings, 'RAVEN_CLIENT') and
-                        settings.RAVEN_CLIENT):
-                        settings.RAVEN_CLIENT.captureException()
             else:
                 logging.debug(u'   ---> [%-30s] ~FBSkipping page fetch: (%s on %s stories) %s' % (feed.title[:30], self.feed_trans[ret_feed], feed.stories_last_month, '' if feed.has_page else ' [HAS NO PAGE]'))
             
@@ -465,9 +424,6 @@ class Dispatcher:
                 feed = feed.save()
             except IntegrityError:
                 logging.debug("   ---> [%-30s] ~FRIntegrityError on feed: %s" % (feed.title[:30], feed.feed_address,))
-            
-            if ret_entries and ret_entries['new']:
-                self.publish_to_subscribers(feed)
                 
             done_msg = (u'%2s ---> [%-30s] ~FYProcessed in ~FM~SB%.4ss~FY~SN (~FB%s~FY) [%s]' % (
                 identity, feed.feed_title[:30], delta,
@@ -476,27 +432,13 @@ class Dispatcher:
             total_duration = time.time() - start_duration
             MAnalyticsFetcher.add(feed_id=feed.pk, feed_fetch=feed_fetch_duration,
                                   feed_process=feed_process_duration, 
-                                  page=page_duration, icon=icon_duration,
-                                  total=total_duration, feed_code=feed_code)
+                                  page=page_duration, total=total_duration, feed_code=feed_code)
             
             self.feed_stats[ret_feed] += 1       
         
         if len(feed_queue) == 1:
             return feed
 
-
-    
-    def publish_to_subscribers(self, feed):
-        try:
-            r = redis.Redis(connection_pool=settings.REDIS_PUBSUB_POOL)
-            listeners_count = r.publish(str(feed.pk), 'story:new')
-            if listeners_count:
-                logging.debug("   ---> [%-30s] ~FMPublished to %s subscribers" % (feed.title[:30], listeners_count))
-        except redis.ConnectionError:
-            logging.debug("   ***> [%-30s] ~BMRedis is unavailable for real-time." % (feed.title[:30],))
-        
-    def count_unreads_for_subscribers(self, feed):
-        return
     
     @timelimit(10)
     def calculate_feed_scores_with_stories(self, user_subs, stories):
