@@ -11,8 +11,6 @@ from django.conf import settings
 from django.db import IntegrityError
 from django.core.cache import cache
 from apps.rss_feeds.models import Feed, MStory
-from apps.rss_feeds.page_importer import PageImporter
-from apps.rss_feeds.icon_importer import IconImporter
 from apps.statistics.models import MAnalyticsFetcher
 from utils import feedparser
 from utils.story_functions import pre_process_story, strip_tags
@@ -273,6 +271,8 @@ class ProcessFeed:
                       '~SB' if ret_values['same'] else '', ret_values['same'],
                       '~FR~SB' if ret_values['error'] else '', ret_values['error'],
                       len(self.fpf.entries)))
+
+        # If there is new story, update all statistics
         self.feed.update_all_statistics(full=bool(ret_values['new']), force=self.options['force'])
 
         self.feed.save_feed_history(200, "OK")
@@ -387,35 +387,7 @@ class Dispatcher:
                 
             if not feed: continue
             feed = self.refresh_feed(feed.pk)
-            if ((self.options['force']) or 
-                (random.random() > .9) or
-                (fetched_feed and
-                 feed.feed_link and
-                 feed.has_page and
-                 (ret_feed == FEED_OK or
-                  (ret_feed == FEED_SAME and feed.stories_last_month > 10)))):
-                  
-                logging.debug(u'   ---> [%-30s] ~FYFetching page: %s' % (feed.title[:30], feed.feed_link))
-                page_importer = PageImporter(feed)
-                try:
-                    page_data = page_importer.fetch_page()
-                    page_duration = time.time() - start_duration
-                except TimeoutError, e:
-                    logging.debug('   ---> [%-30s] ~FRPage fetch timed out...' % (feed.title[:30]))
-                    page_data = None
-                    feed.save_page_history(555, 'Timeout', '')
-                except Exception, e:
-                    logging.debug('[%d] ! -------------------------' % (feed_id,))
-                    tb = traceback.format_exc()
-                    logging.error(tb)
-                    logging.debug('[%d] ! -------------------------' % (feed_id,))
-                    feed.save_page_history(550, "Page Error", tb)
-                    fetched_feed = None
-                    page_data = None
-            else:
-                logging.debug(u'   ---> [%-30s] ~FBSkipping page fetch: (%s on %s stories) %s' % (feed.title[:30], self.feed_trans[ret_feed], feed.stories_last_month, '' if feed.has_page else ' [HAS NO PAGE]'))
-            
-            feed = self.refresh_feed(feed.pk)
+
             delta = time.time() - start_time
             
             feed.last_load_time = round(delta)

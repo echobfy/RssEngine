@@ -33,7 +33,6 @@ DEBUG = True
 TEMPLATE_DEBUG = DEBUG
 
 ADMINS = (
-    # ('Xinyan Lu', 'luxinyan@outlook.com'),
     ('Chen Yiyu','515822895@qq.com'),
 )
 
@@ -45,10 +44,6 @@ MANAGERS = ADMINS
 
 DATABASES = {
     'default': {
-        #'ENGINE': 'django.db.backends.postgresql_psycopg2',
-        #'NAME': 'mydb',
-        #'USER': 'postgres',
-        #'PASSWORD': 'postgres1234',
         'ENGINE': 'django.db.backends.mysql',
         'NAME': 'mydb',
         'USER': 'root',
@@ -216,7 +211,6 @@ REDIS_STATISTICS_POOL    = redis.ConnectionPool(host=REDIS['host'], port=6379, d
 REDIS_FEED_POOL          = redis.ConnectionPool(host=REDIS['host'], port=6379, db=4)
 REDIS_SESSION_POOL       = redis.ConnectionPool(host=REDIS['host'], port=6379, db=5)
 REDIS_NETWORK_POOL       = redis.ConnectionPool(host=REDIS['host'], port=6379, db=6)
-# REDIS_CACHE_POOL       = redis.ConnectionPool(host=REDIS['host'], port=6379, db=6) # Duped in CACHES
 REDIS_PUBSUB_POOL        = redis.ConnectionPool(host=REDIS_PUBSUB['host'], port=6379, db=0)
 REDIS_STORY_HASH_POOL    = redis.ConnectionPool(host=REDIS_STORY['host'], port=6379, db=1)
 # REDIS_STORY_HASH_POOL2 = redis.ConnectionPool(host=REDIS['host'], port=6379, db=8)
@@ -264,7 +258,6 @@ MONGO_DB = dict(MONGO_DB_DEFAULTS, **MONGO_DB)
 #     MONGOPRIMARYDB = MONGODB
 #MONGODB = connect(MONGO_DB.pop('name'), **MONGO_DB)
 MONGO_ANALYTICS_DB = dict(MONGO_ANALYTICS_DB_DEFAULTS, **MONGO_ANALYTICS_DB)
-#MONGOANALYTICSDB = connect(MONGO_ANALYTICS_DB.pop('name'), **MONGO_ANALYTICS_DB)
 
 # =================
 # = Elasticsearch =
@@ -477,16 +470,6 @@ LOGGING = {
     },
 }
 
-# !!! should be remove later
-# ==========================
-# = Miscellaneous Settings =
-# ==========================
-
-DAYS_OF_UNREAD          = 14
-DAYS_OF_UNREAD_NEW      = 30
-SUBSCRIBER_EXPIRE       = 2
-
-
 #============================
 #= COW Corss the Green Wall =
 #============================
@@ -505,4 +488,3 @@ MAIL_USER = "rss_feeds"
 MAIL_PASS = "zjurss"
 MAIL_POSTFIX = "126.com"
 MAIL_NOTIFY_LIST = ['515822895@qq.com']
-# MAIL_NOTIFY_LIST = ['songjun54cm@gmail.com','luxinyan@outlook.com']

@@ -60,9 +60,7 @@ class Command(BaseCommand):
                 if frozen_num > 0:
                     r.rpush('freeze_feeds',feed_id)
             except Exception, e:
-                logging.error(str(e)+\
-                            traceback.format_exc()+'\n'+\
-                            'Error from:  freeze_feeds\n')
+                logging.error(str(e) + traceback.format_exc() + '\n' + 'Error from:  freeze_feeds\n')
             feed_id = r.lpop('freeze_feeds')
         print 'Done!'
 

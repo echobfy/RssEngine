@@ -49,7 +49,7 @@ class TaskFeeds(Task):
                             r.zcard('scheduled_updates')))
 
             # and add to queued_feeds the feed_ids which come from scheduled_updates.
-            if len(queued_feeds)>0:
+            if len(queued_feeds) > 0:
                 r.sadd('queued_feeds', *queued_feeds)
 
             logging.debug(" ---> ~SN~FBQueuing ~SB%s~SN stale feeds (~SB%s~SN/~FG%s~FB~SN/%s tasked/queued/scheduled)" % (
@@ -134,8 +134,8 @@ class TaskFeeds(Task):
             import traceback
             traceback.print_exc()
             logging.error(str(e))
-            #if settings.SEND_ERROR_MAILS:
-                #mail_admins("Error in Task-Feeds",str(e)+'\n'+traceback.format_exc())
+            if settings.SEND_ERROR_MAILS:
+                mail_admins("Error in Task-Feeds",str(e)+'\n'+traceback.format_exc())
 
 class UpdateFeeds(Task):
     name = 'update-feeds'
@@ -168,8 +168,8 @@ class UpdateFeeds(Task):
                     feed.update(**options)
         except Exception, e:
             logging.error(str(e) + traceback.format_exc() + '\n' + 'error from:  UpdateFeeds\n')
-           # if settings.SEND_ERROR_MAILS:
-                #mail_admins("Error in UpdateFeeds",str(e)+'\n'+traceback.format_exc())
+            if settings.SEND_ERROR_MAILS:
+                mail_admins("Error in UpdateFeeds",str(e)+'\n'+traceback.format_exc())
 
 
 class UpdateFeedImages(Task):
@@ -210,39 +210,6 @@ class NewFeeds(Task):
             feed = Feed.get_by_id(feed_pk)
             if not feed: continue
             feed.update(options=options)
-
-
-class PushFeeds(Task):
-    name = 'push-feeds'
-    max_retries = 0
-    ignore_result = True
-
-    def run(self, feed_id, xml, **kwargs):
-        from apps.rss_feeds.models import Feed
-        from apps.statistics.models import MStatistics
-
-        mongodb_replication_lag = int(MStatistics.get('mongodb_replication_lag', 0))
-        compute_scores = bool(mongodb_replication_lag < 60)
-
-        options = {
-            'feed_xml': xml,
-            'compute_scores': compute_scores,
-            'mongodb_replication_lag': mongodb_replication_lag,
-        }
-        feed = Feed.get_by_id(feed_id)
-        if feed:
-            feed.update(options=options)
-
-
-class ScheduleImmediateFetches(Task):
-
-    def run(self, feed_ids, **kwargs):
-        from apps.rss_feeds.models import Feed
-
-        if not isinstance(feed_ids, list):
-            feed_ids = [feed_ids]
-
-        Feed.schedule_feed_fetches_immediately(feed_ids)
         
 
 class FreezeFeeds(Task):
