@@ -1,6 +1,6 @@
 #!/bin/bash
 cd ..
-screen -d -m -S rss_beat python2.6 manage.py celery worker -B -Q beat_feeds_task,beat_tasks --loglevel=info --autoreload
+python manage.py celery worker -B -Q beat_feeds_task,beat_tasks --loglevel=info --autoreload
 echo start rss_beat OK!
 #i=0
 #while ((i<8))

@@ -60,7 +60,7 @@ class TaskFeeds(Task):
 
             # if the number of fetch task is less than 5000, and then get no more than 5000 feed_ids from queued_feeds
             if tasked_feeds_size < 5000:
-                feeds = r.srandmember('queued_feeds',5000)
+                feeds = r.srandmember('queued_feeds', 5000)
                 # this method will delete the feed_ids in queued_feeds, and add them to tasked_feeds, and package feed_id
                 # to a fetch task and distribute.
                 # Note: feed_id delete from tasked_feeds only after the fetch is over. 
@@ -78,7 +78,6 @@ class TaskFeeds(Task):
             # And this method will also force the new feed to refresh.
             refresh_feeds = Feed.objects.filter(
                 fetched_once=False,
-                active_subscribers__gte=1
             ).order_by('?')[:100]
             refresh_count = refresh_feeds.count()
             cp2 = time.time()
@@ -106,7 +105,6 @@ class TaskFeeds(Task):
             old = now - datetime.timedelta(days=1)
             old_feeds = Feed.objects.filter(
                 next_scheduled_update__lte=old,
-                active_subscribers__gte=1
             ).order_by('?')[:500]
             old_count = old_feeds.count()
             cp4 = time.time()

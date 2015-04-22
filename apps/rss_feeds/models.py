@@ -50,11 +50,9 @@ ENTRY_NEW, ENTRY_UPDATED, ENTRY_SAME, ENTRY_ERR = range(4)
 
 class Feed(models.Model):
     feed_address = models.URLField(max_length=764, db_index=True)
-    feed_link = models.URLField(
-        max_length=1000, default="", blank=True, null=True)
+    feed_link = models.URLField(max_length=1000, default="", blank=True, null=True)
     hash_address_and_link = models.CharField(max_length=64, unique=True)  # hashlib.sha1(feed_address + feed_link)
-    feed_title = models.CharField(
-        max_length=255, default="[Untitled]", blank=True, null=True)
+    feed_title = models.CharField(max_length=255, default="[Untitled]", blank=True, null=True)
 
     last_update = models.DateTimeField(db_index=True)               # the last update time for the record of feed
     next_scheduled_update = models.DateTimeField()                  # the next time to schedule this feed_id
@@ -62,9 +60,6 @@ class Feed(models.Model):
     known_good = models.BooleanField(default=False)                 # the feed is not good feed, after the fetch is OK, then good
 
     has_feed_exception = models.BooleanField(default=False, db_index=True)
-    has_page_exception = models.BooleanField(default=False, db_index=True)
-    has_page = models.BooleanField(default=True)
-
     exception_code = models.IntegerField(default=0)
     errors_since_good = models.IntegerField(default=0)              # it means number of errors since the last a good fetch
 
@@ -120,7 +115,7 @@ class Feed(models.Model):
             'not_yet_fetched': not self.fetched_once,  # Legacy. Doh.
         }
 
-        if self.has_page_exception or self.has_feed_exception:
+        if self.has_feed_exception:
             feed['has_exception'] = True
             feed['exception_type'] = 'feed' if self.has_feed_exception else 'page'
             feed['exception_code'] = self.exception_code
@@ -128,9 +123,6 @@ class Feed(models.Model):
             feed['has_exception'] = False
             feed['exception_type'] = None
             feed['exception_code'] = self.exception_code
-
-        if not self.has_page:
-            feed['disabled_page'] = True
 
         return feed
 
@@ -445,7 +437,8 @@ class Feed(models.Model):
 
         delta = self.next_scheduled_update - datetime.datetime.now()
 
-        #minutes_to_next_fetch = delta.total_seconds() / 60
+        # !!!!!
+        #minutes_to_next_fetch = delta.total_seconds() / 60 
         minutes_to_next_fetch = (delta.seconds + (delta.days * 24 * 3600)) / 60
         if minutes_to_next_fetch > self.min_to_decay or not skip_scheduling:
             self.next_scheduled_update = next_scheduled_update
@@ -469,25 +462,9 @@ class Feed(models.Model):
             self.errors_since_good += 1
             self.count_errors_in_history('feed', status_code, fetch_history=fetch_history)
             self.set_next_scheduled_update()
-        
         elif self.has_feed_exception or self.errors_since_good:
             self.errors_since_good = 0
             self.has_feed_exception = False
-            self.save()
-
-    def save_page_history(self, status_code, message, exception=None):
-        # Note: the status_code, message, feed_fetch_type will be added to history and return.
-        fetch_history = MFetchHistory.add(feed_id=self.pk,
-                                          fetch_type='page',
-                                          code=int(status_code),
-                                          message=message,
-                                          exception=exception)
-
-        if status_code not in (200, 304):
-            self.count_errors_in_history('page', status_code, fetch_history=fetch_history)
-        elif self.has_page_exception or not self.has_page:
-            self.has_page_exception = False
-            self.has_page = True
             self.save()
 
     def count_errors_in_history(self, exception_type='feed', status_code=None, fetch_history=None):
@@ -502,16 +479,13 @@ class Feed(models.Model):
         if len(non_errors) == 0 and len(errors) > 1:
             if exception_type == 'feed':
                 self.has_feed_exception = True
-            elif exception_type == 'page':
-                self.has_page_exception = True
             self.exception_code = status_code or int(errors[0])
             self.save()
+        # !!!!!
         elif self.exception_code > 0:
             self.exception_code = 0
             if exception_type == 'feed':
                 self.has_feed_exception = False
-            elif exception_type == 'page':
-                self.has_page_exception = False
             self.save()
 
         return errors, non_errors
@@ -624,8 +598,7 @@ class Feed(models.Model):
                     continue
 
                 if story_content and len(story_content) > 10:
-                    story_content_diff = htmldiff(
-                        unicode(original_content), unicode(story_content))
+                    story_content_diff = htmldiff(unicode(original_content), unicode(story_content))
                 else:
                     story_content_diff = original_content
                 if existing_story.story_guid != story.get('guid'):
@@ -878,6 +851,7 @@ class Feed(models.Model):
         fcat = [strip_tags(t)[:250] for t in fcat[:12]]
         return fcat
 
+    @classmethod
     def get_permalink(self, entry):
         link = entry.get('link')
         if not link:

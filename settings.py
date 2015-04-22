@@ -8,7 +8,6 @@ import re
 from mongoengine import connect
 
 SEND_ERROR_MAILS = False
-D_OCEAN_REDIS_POOL = redis.ConnectionPool(host="172.21.1.156", port=6379, db=0)
 
 # ===========================
 # = Directory Declaractions =
@@ -45,9 +44,10 @@ MANAGERS = ADMINS
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'mydb',
-        'USER': 'root',
-        'HOST': 'localhost',
+        'NAME': 'test',
+        'USER': 'xli',
+        'PASSWORD': '123456',
+        'HOST': '172.21.1.151',
         'PORT': '',        
     }
 }
@@ -66,10 +66,6 @@ CELERY_ROUTES = {
     "new-feeds": {
         "queue": "new_feeds",
         "binding_key": "new_feeds"
-    },
-    "push-feeds": {
-        "queue": "push_feeds",
-        "binding_key": "push_feeds"
     },
     "update-feeds": {
         "queue": "update_feeds",
@@ -98,11 +94,6 @@ CELERY_QUEUES = {
         "exchange": "new_feeds",
         "exchange_type": "direct",
         "binding_key": "new_feeds"
-    },
-    "push_feeds": {
-        "exchange": "push_feeds",
-        "exchange_type": "direct",
-        "binding_key": "push_feeds"
     },
     "update_feeds": {
         "exchange": "update_feeds",
@@ -148,34 +139,25 @@ CELERYBEAT_SCHEDULE = {
         'options': {'queue': 'beat_feeds_task'},
     },
 
-    'net-monitor-task' : {
-        'task': 'net-monitor-task',
-        'schedule': datetime.timedelta(minutes=1),
-        'options': {'queue': 'beat_tasks'},
-    },
+    # 'net-monitor-task' : {
+    #     'task': 'net-monitor-task',
+    #     'schedule': datetime.timedelta(minutes=1),
+    #     'options': {'queue': 'beat_tasks'},
+    # },
 }
-#=====================================
-#= Add by SongJun=
-CELERY_SEND_TASK_ERROR_EMAILS = SEND_ERROR_MAILS
-#=====================================
+
 
 # =========
 # = Redis =
 # =========
 
 REDIS = {
-    # 'host': 'redis1',
-    #'host': 'localhost',
     'host': 'localhost',
 }
 REDIS_PUBSUB = {
-    # 'host': 'redis2',
-    #'host': 'localhost',
     'host': 'localhost',
 }
 REDIS_STORY = {
-    # 'host': 'redis3',
-    #'host': 'localhost',
     'host': 'localhost',
 }
 CELERY_REDIS_DB = 4
@@ -226,38 +208,28 @@ REDIS_NETWORK_LOG_NAME= "network_log"
 # =========
 
 MONGO_DB = {
-	#'host': '172.21.1.155:27017',
-	'host': 'localhost',
+	'host': '172.21.1.155:27017',
     'name': 'doctopus',
 }
 MONGO_ANALYTICS_DB = {
-	#'host': '172.21.1.155:27017',
-	'host': 'localhost',
+	'host': '172.21.1.155:27017',
     'name': 'nbanalytics',
 }
 
 MONGO_DB_DEFAULTS = {
     'name': 'doctopus',
-	#'host': '172.21.1.155:27017',
-	'host': 'localhost',
+	'host': '172.21.1.155:27017',
     'alias': 'default',
 }
 MONGO_ANALYTICS_DB_DEFAULTS = {
     'name': 'nbanalytics',
-	#'host': '172.21.1.155:27017',
-	'host': 'localhost',
+	'host': '172.21.1.155:27017',
     'alias': 'nbanalytics',
 }
 MONGO_DB = dict(MONGO_DB_DEFAULTS, **MONGO_DB)
-
-# if MONGO_DB.get('read_preference', pymongo.ReadPreference.PRIMARY) != pymongo.ReadPreference.PRIMARY:
-#     MONGO_PRIMARY_DB = MONGO_DB.copy()
-#     MONGO_PRIMARY_DB.update(read_preference=pymongo.ReadPreference.PRIMARY)
-#     MONGOPRIMARYDB = connect(MONGO_PRIMARY_DB.pop('name'), **MONGO_PRIMARY_DB)
-# else:
-#     MONGOPRIMARYDB = MONGODB
-#MONGODB = connect(MONGO_DB.pop('name'), **MONGO_DB)
+MONGODB = connect(MONGO_DB.pop('name'), **MONGO_DB)
 MONGO_ANALYTICS_DB = dict(MONGO_ANALYTICS_DB_DEFAULTS, **MONGO_ANALYTICS_DB)
+MONGOANALYTICSDB = connect(MONGO_ANALYTICS_DB.pop('name'), **MONGO_ANALYTICS_DB)
 
 # =================
 # = Elasticsearch =
@@ -322,9 +294,6 @@ STATIC_URL = '/static/'
 # Additional locations of static files
 STATICFILES_DIRS = (
     os.path.join(CURRENT_DIR, 'static'),
-    # Put strings here, like "/home/html/static" or "C:/www/django/static".
-    # Always use forward slashes, even on Windows.
-    # Don't forget to use absolute paths, not relative paths.
 )
 
 # List of finder classes that know how to find static files in
@@ -345,15 +314,15 @@ TEMPLATE_LOADERS = (
 #     'django.template.loaders.eggs.Loader',
 )
 
-MIDDLEWARE_CLASSES = (
-    'django.middleware.common.CommonMiddleware',
-    'django.contrib.sessions.middleware.SessionMiddleware',
-    'django.middleware.csrf.CsrfViewMiddleware',
-    'django.contrib.auth.middleware.AuthenticationMiddleware',
-    'django.contrib.messages.middleware.MessageMiddleware',
-    # Uncomment the next line for simple clickjacking protection:
-    # 'django.middleware.clickjacking.XFrameOptionsMiddleware',
-)
+# MIDDLEWARE_CLASSES = (
+#     'django.middleware.common.CommonMiddleware',
+#     'django.contrib.sessions.middleware.SessionMiddleware',
+#     'django.middleware.csrf.CsrfViewMiddleware',
+#     'django.contrib.auth.middleware.AuthenticationMiddleware',
+#     'django.contrib.messages.middleware.MessageMiddleware',
+#     # Uncomment the next line for simple clickjacking protection:
+#     # 'django.middleware.clickjacking.XFrameOptionsMiddleware',
+# )
 
 ROOT_URLCONF = 'urls'
 
@@ -362,23 +331,18 @@ WSGI_APPLICATION = 'wsgi.application'
 
 TEMPLATE_DIRS = (
     os.path.join(CURRENT_DIR, 'templates'),
-    # Put strings here, like "/home/html/django_templates" or "C:/www/django/templates".
-    # Always use forward slashes, even on Windows.
-    # Don't forget to use absolute paths, not relative paths.
 )
 
 INSTALLED_APPS = (
     'django_extensions',
-    'django.contrib.auth',
-    'django.contrib.contenttypes',
-    'django.contrib.sessions',
-    'django.contrib.sites',
-    'django.contrib.messages',
-    'django.contrib.staticfiles',
-    # Uncomment the next line to enable the admin:
-    'django.contrib.admin',
-    # Uncomment the next line to enable admin documentation:
+    #'django.contrib.auth',
+    #'django.contrib.contenttypes',
+    #'django.contrib.sessions',
+    #'django.contrib.sites',
+    #'django.contrib.messages',
+    #'django.contrib.admin',
     # 'django.contrib.admindocs',
+    'django.contrib.staticfiles',
     'djcelery',
     'apps.rss_feeds',
     'apps.search',

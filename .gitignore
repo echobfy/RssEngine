@@ -49,6 +49,10 @@ coverage.xml
 
 # log
 logs/
+*.rdb
+celerybeat-schedule
+
+
 
 # Django stuff:
 *.log

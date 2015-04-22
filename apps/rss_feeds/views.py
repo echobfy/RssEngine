@@ -24,12 +24,12 @@ def index(request,page_num):
 	if keyword:
 		collec = Feed.objects.filter(Q(feed_link__contains=keyword) | Q(feed_title__contains=keyword))
 	else:
-		collec = Feed.objects.filter(num_subscribers__gte=2)
+		collec = Feed.objects.filter()
 
 	if sortby == 'numsubscribers':
-		collec = collec.order_by('-num_subscribers')
+		collec = collec.order_by('?')
 	elif sortby == 'hasexception':
-		collec = collec.order_by('-has_feed_exception','-num_subscribers')
+		collec = collec.order_by('-has_feed_exception')
 	elif sortby == 'nextupdate':
 		collec = collec.order_by('next_scheduled_update')
 	elif sortby == 'lastupdate':
