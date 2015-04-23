@@ -15,7 +15,7 @@ class MAnalyticsFetcher(mongo.Document):
     feed_code = mongo.IntField()
     
     meta = {
-        'db_alias': 'nbanalytics',
+        'db_alias': 'doctopus',
         'collection': 'feed_fetches',
         'allow_inheritance': False,
         'indexes': ['date', 'feed_id', 'server', 'feed_code'],

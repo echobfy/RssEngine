@@ -41,6 +41,7 @@ SERVER_NAME  = 'dcd03'
 
 MANAGERS = ADMINS
 
+DEFAULT_CHARSET = 'UTF-8'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
@@ -120,9 +121,6 @@ CELERY_DEFAULT_QUEUE = "work_queue"
 
 CELERYD_PREFETCH_MULTIPLIER = 1
 CELERY_IMPORTS              = ("apps.rss_feeds.tasks",)
-                               # "apps.social.tasks",
-                               # "apps.reader.tasks",
-                               # "apps.feed_import.tasks",
                                # "apps.statistics.tasks",)
 CELERYD_CONCURRENCY         = 3
 CELERY_IGNORE_RESULT        = True
@@ -138,12 +136,6 @@ CELERYBEAT_SCHEDULE = {
         'schedule': datetime.timedelta(minutes=1),
         'options': {'queue': 'beat_feeds_task'},
     },
-
-    # 'net-monitor-task' : {
-    #     'task': 'net-monitor-task',
-    #     'schedule': datetime.timedelta(minutes=1),
-    #     'options': {'queue': 'beat_tasks'},
-    # },
 }
 
 
@@ -213,7 +205,7 @@ MONGO_DB = {
 }
 MONGO_ANALYTICS_DB = {
 	'host': '172.21.1.155:27017',
-    'name': 'nbanalytics',
+    'name': 'doctopus',
 }
 
 MONGO_DB_DEFAULTS = {
@@ -222,9 +214,9 @@ MONGO_DB_DEFAULTS = {
     'alias': 'default',
 }
 MONGO_ANALYTICS_DB_DEFAULTS = {
-    'name': 'nbanalytics',
+    'name': 'doctopus',
 	'host': '172.21.1.155:27017',
-    'alias': 'nbanalytics',
+    'alias': 'doctopus',
 }
 MONGO_DB = dict(MONGO_DB_DEFAULTS, **MONGO_DB)
 MONGODB = connect(MONGO_DB.pop('name'), **MONGO_DB)

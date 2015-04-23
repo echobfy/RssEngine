@@ -47,7 +47,6 @@ from utils.image_url_filters import IMAGE_BLACKLIST_FILTERS
 
 ENTRY_NEW, ENTRY_UPDATED, ENTRY_SAME, ENTRY_ERR = range(4)
 
-
 class Feed(models.Model):
     feed_address = models.URLField(max_length=764, db_index=True)
     feed_link = models.URLField(max_length=1000, default="", blank=True, null=True)
@@ -259,8 +258,6 @@ class Feed(models.Model):
             'timeout': 10,
             'single_threaded': kwargs.get('single_threaded', True),
             'force': kwargs.get('force'),
-            'compute_scores': kwargs.get('compute_scores', True),
-            'mongodb_replication_lag': kwargs.get('mongodb_replication_lag', None),
             'fake': kwargs.get('fake'),
             'quick': kwargs.get('quick'),
             'debug': kwargs.get('debug'),
@@ -961,12 +958,12 @@ class MStory(mongo.Document):
         #Add by Xinyan Lu : index on save
         if not story_content and self.story_content_z:
             story_content = zlib.decompress(self.story_content_z)
-        SearchStory.index(story_id=self.story_guid,
-                            story_title=self.story_title,
-                            story_content=story_content,
-                            story_author=self.story_author_name,
-                            story_date=self.story_date,
-                            db_id=str(self.id))
+        # SearchStory.index(story_id=self.story_guid,
+        #                     story_title=self.story_title,
+        #                     story_content=story_content,
+        #                     story_author=self.story_author_name,
+        #                     story_date=self.story_date,
+        #                     db_id=str(self.id))
 
         return self
 
@@ -1223,7 +1220,7 @@ class MFetchHistory(mongo.Document):
     page_fetch_history = mongo.DynamicField()
 
     meta = {
-        'db_alias': 'nbanalytics',
+        'db_alias': 'doctopus',
         'collection': 'fetch_history',
         'allow_inheritance': False,
     }

@@ -132,8 +132,8 @@ class TaskFeeds(Task):
             import traceback
             traceback.print_exc()
             logging.error(str(e))
-            if settings.SEND_ERROR_MAILS:
-                mail_admins("Error in Task-Feeds",str(e)+'\n'+traceback.format_exc())
+            # if settings.SEND_ERROR_MAILS:
+            #     mail_admins("Error in Task-Feeds",str(e)+'\n'+traceback.format_exc())
 
 class UpdateFeeds(Task):
     name = 'update-feeds'
@@ -145,11 +145,7 @@ class UpdateFeeds(Task):
             from apps.rss_feeds.models import Feed
             r = redis.Redis(connection_pool=settings.REDIS_FEED_POOL)
 
-            options = {
-            #    'quick': float(MStatistics.get('quick_fetch', 0)),
-            #    'compute_scores': compute_scores,
-            #    'mongodb_replication_lag': mongodb_replication_lag,
-            }
+            options = {}
 
             if not isinstance(feed_pks, list):
                 feed_pks = [feed_pks]
@@ -166,8 +162,8 @@ class UpdateFeeds(Task):
                     feed.update(**options)
         except Exception, e:
             logging.error(str(e) + traceback.format_exc() + '\n' + 'error from:  UpdateFeeds\n')
-            if settings.SEND_ERROR_MAILS:
-                mail_admins("Error in UpdateFeeds",str(e)+'\n'+traceback.format_exc())
+            # if settings.SEND_ERROR_MAILS:
+            #     mail_admins("Error in UpdateFeeds",str(e)+'\n'+traceback.format_exc())
 
 
 class UpdateFeedImages(Task):

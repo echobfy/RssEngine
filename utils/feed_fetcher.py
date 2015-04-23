@@ -20,6 +20,10 @@ from utils.feed_functions import timelimit, TimeoutError, utf8encode, cache_bust
 
 FEED_OK, FEED_SAME, FEED_ERRPARSE, FEED_ERRHTTP, FEED_ERREXC = range(5)
 
+import sys
+reload(sys)
+sys.setdefaultencoding('utf-8')
+
 def mtime(ttime):
     """ datetime auxiliar function.
     """
@@ -259,8 +263,7 @@ class ProcessFeed:
         ))
         
         ret_values = self.feed.add_update_stories(stories, existing_stories,
-                                                  verbose=self.options['verbose'],
-                                                  updates_off=self.options['updates_off'])
+                                                  verbose=self.options['verbose'],)
         
         logging.debug(u'   ---> [%-30s] ~FYParsed Feed: %snew=%s~SN~FY %sup=%s~SN same=%s%s~SN %serr=%s~SN~FY total=~SB%s' % (
                       self.feed.title[:30], 
@@ -271,7 +274,7 @@ class ProcessFeed:
                       len(self.fpf.entries)))
 
         # If there is new story, update all statistics
-        self.feed.update_all_statistics(full=bool(ret_values['new']), force=self.options['force'])
+        self.feed.update_all_statistics(full=bool(ret_values['new']))
 
         self.feed.save_feed_history(200, "OK")
         
@@ -400,21 +403,14 @@ class Dispatcher:
                 feed.pk, self.feed_trans[ret_feed],))
             logging.debug(done_msg)
             total_duration = time.time() - start_duration
-            MAnalyticsFetcher.add(feed_id=feed.pk, feed_fetch=feed_fetch_duration,
-                                  feed_process=feed_process_duration, 
-                                  page=page_duration, total=total_duration, feed_code=feed_code)
+            # MAnalyticsFetcher.add(feed_id=feed.pk, feed_fetch=feed_fetch_duration,
+            #                       feed_process=feed_process_duration, 
+            #                       page=page_duration, total=total_duration, feed_code=feed_code)
             
             self.feed_stats[ret_feed] += 1       
         
         if len(feed_queue) == 1:
             return feed
-
-    
-    @timelimit(10)
-    def calculate_feed_scores_with_stories(self, user_subs, stories):
-        for sub in user_subs:
-            silent = False if self.options['verbose'] >= 2 else True
-            sub.calculate_feed_scores(silent=silent, stories=stories)
             
     def add_jobs(self, feeds_queue, feeds_count=1):
         """ adds a feed processing job to the pool

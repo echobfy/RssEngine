@@ -63,12 +63,6 @@ class TextImporter:
             content = original_text_doc.summary(html_partial=True)
         except readability.Unparseable:
             return
-
-        # try:
-        #     title = original_text_doc.title()
-        # except TypeError:
-        #     title = ""
-        # url = resp.url
         
         if content:
             if self.story and not skip_save:
