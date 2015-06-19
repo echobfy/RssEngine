@@ -45,10 +45,9 @@ class FetchFeed:
         """
         start = time.time()
         identity = self.get_identity()
-        log_msg = u'%2s ---> [%-30s] ~FYFetching feed (~FB%d~FY), last update: %s' % (identity,
+        log_msg = u'%2s ---> [%-30s] ~FYFetching feed (~FB%d~FY)' % (identity,
                                                             self.feed.title[:30],
-                                                            self.feed.id,
-                                                            datetime.datetime.now() - self.feed.last_update)
+                                                            self.feed.id)
         logging.debug(log_msg)
                                                  
         etag = self.feed.etag

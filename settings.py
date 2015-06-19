@@ -2,9 +2,8 @@ import sys
 import os
 import logging
 import datetime
+
 import redis
-import django.http
-import re
 from mongoengine import connect
 
 SEND_ERROR_MAILS = False
@@ -20,7 +19,6 @@ VENDOR_ROOT   = os.path.join(CURRENT_DIR, 'vendor')
 # ==============
 # = PYTHONPATH =
 # ==============
-
 if '/utils' not in ' '.join(sys.path):
     sys.path.append(UTILS_ROOT)
 
@@ -32,23 +30,20 @@ DEBUG = True
 TEMPLATE_DEBUG = DEBUG
 
 ADMINS = (
-    ('Chen Yiyu','515822895@qq.com'),
+    ('Bai fuyu','379348913@qq.com'),
 )
 
-# These two properties do not affect
-NEWSBLUR_URL = 'http://www.dcd.zju.edu.cn'
-SERVER_NAME  = 'dcd03'
-
-MANAGERS = ADMINS
-
+# =================
+# = For Rss Feeds =
+# =================
 DEFAULT_CHARSET = 'UTF-8'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'test',
-        'USER': 'xli',
+        'NAME': 'rssFeed',
+        'USER': 'udms',
         'PASSWORD': '123456',
-        'HOST': '172.21.1.151',
+        'HOST': '10.13.91.251',
         'PORT': '',        
     }
 }
@@ -64,10 +59,6 @@ CELERY_ROUTES = {
         "queue": "work_queue",
         "binding_key": "work_queue"
     },
-    "new-feeds": {
-        "queue": "new_feeds",
-        "binding_key": "new_feeds"
-    },
     "update-feeds": {
         "queue": "update_feeds",
         "binding_key": "update_feeds"
@@ -75,10 +66,6 @@ CELERY_ROUTES = {
     "beat-tasks": {
         "queue": "beat_tasks",
         "binding_key": "beat_tasks"
-    },
-    "update-feed-images": {
-        "queue": "update_feed_images",
-        "binding_key": "update_feed_images"
     },
     "net-monitor-task": {
         "queue": "beat_tasks",
@@ -90,11 +77,6 @@ CELERY_QUEUES = {
         "exchange": "work_queue",
         "exchange_type": "direct",
         "binding_key": "work_queue",
-    },
-    "new_feeds": {
-        "exchange": "new_feeds",
-        "exchange_type": "direct",
-        "binding_key": "new_feeds"
     },
     "update_feeds": {
         "exchange": "update_feeds",
@@ -110,11 +92,6 @@ CELERY_QUEUES = {
         "exchange": "beat_feeds_task",
         "exchange_type": "direct",
         "binding_key": "beat_feeds_task"
-    },
-    "update_feed_images": {
-        "exchange": "update_feed_images",
-        "exchange_type": "direct",
-        "binding_key": "update_feed_images"
     },
 }
 CELERY_DEFAULT_QUEUE = "work_queue"
@@ -146,23 +123,17 @@ CELERYBEAT_SCHEDULE = {
 REDIS = {
     'host': 'localhost',
 }
-REDIS_PUBSUB = {
-    'host': 'localhost',
-}
 REDIS_STORY = {
     'host': 'localhost',
 }
 CELERY_REDIS_DB = 4
 SESSION_REDIS_DB = 5
 
-# =========
-# = Redis =
-# =========
+
 
 BROKER_BACKEND = "redis"
 BROKER_URL = "redis://%s:6379/%s" % (REDIS['host'], CELERY_REDIS_DB)
 CELERY_RESULT_BACKEND = BROKER_URL
-SESSION_REDIS_HOST = REDIS['host']
 
 CACHES = {
     'default': {
@@ -178,16 +149,12 @@ CACHES = {
 # =========
 # = Redis =
 # =========
-
 REDIS_POOL               = redis.ConnectionPool(host=REDIS['host'], port=6379, db=0)
 REDIS_ANALYTICS_POOL     = redis.ConnectionPool(host=REDIS['host'], port=6379, db=2)
 REDIS_STATISTICS_POOL    = redis.ConnectionPool(host=REDIS['host'], port=6379, db=3)
 REDIS_FEED_POOL          = redis.ConnectionPool(host=REDIS['host'], port=6379, db=4)
-REDIS_SESSION_POOL       = redis.ConnectionPool(host=REDIS['host'], port=6379, db=5)
 REDIS_NETWORK_POOL       = redis.ConnectionPool(host=REDIS['host'], port=6379, db=6)
-REDIS_PUBSUB_POOL        = redis.ConnectionPool(host=REDIS_PUBSUB['host'], port=6379, db=0)
 REDIS_STORY_HASH_POOL    = redis.ConnectionPool(host=REDIS_STORY['host'], port=6379, db=1)
-# REDIS_STORY_HASH_POOL2 = redis.ConnectionPool(host=REDIS['host'], port=6379, db=8)
 
 # ===================
 # = Network Monitor =
@@ -198,45 +165,26 @@ REDIS_NETWORK_LOG_NAME= "network_log"
 # =========
 # = Mongo =
 # =========
-
 MONGO_DB = {
-	'host': '172.21.1.155:27017',
-    'name': 'doctopus',
-}
-MONGO_ANALYTICS_DB = {
-	'host': '172.21.1.155:27017',
-    'name': 'doctopus',
+	'host': '10.13.91.251:27017',
+    'name': 'RssEngine',
+    'username': 'udms',
+    'password': '123456',
 }
 
 MONGO_DB_DEFAULTS = {
-    'name': 'doctopus',
-	'host': '172.21.1.155:27017',
+    'name': 'RssEngine',
+	'host': '10.13.91.251:27017',
     'alias': 'default',
-}
-MONGO_ANALYTICS_DB_DEFAULTS = {
-    'name': 'doctopus',
-	'host': '172.21.1.155:27017',
-    'alias': 'doctopus',
 }
 MONGO_DB = dict(MONGO_DB_DEFAULTS, **MONGO_DB)
 MONGODB = connect(MONGO_DB.pop('name'), **MONGO_DB)
-MONGO_ANALYTICS_DB = dict(MONGO_ANALYTICS_DB_DEFAULTS, **MONGO_ANALYTICS_DB)
-MONGOANALYTICSDB = connect(MONGO_ANALYTICS_DB.pop('name'), **MONGO_ANALYTICS_DB)
 
 # =================
 # = Elasticsearch =
 # =================
-
 ELASTICSEARCH_HOSTS = ['localhost:9200']
 
-# ===========
-# = FastDFS =
-# ===========
-# Should be a absolute path
-
-FDFS_CLIENT_CONF_PATH = os.path.join(CURRENT_DIR, 'conf/fdfs/client.conf')
-# bind the ip and port
-FDFS_HTTP_SERVER = 'http://172.21.1.155:8090/'
 
 # Hosts/domain names that are valid for this site; required if DEBUG is False
 # See https://docs.djangoproject.com/en/1.5/ref/settings/#allowed-hosts
@@ -306,15 +254,11 @@ TEMPLATE_LOADERS = (
 #     'django.template.loaders.eggs.Loader',
 )
 
-# MIDDLEWARE_CLASSES = (
-#     'django.middleware.common.CommonMiddleware',
-#     'django.contrib.sessions.middleware.SessionMiddleware',
-#     'django.middleware.csrf.CsrfViewMiddleware',
-#     'django.contrib.auth.middleware.AuthenticationMiddleware',
-#     'django.contrib.messages.middleware.MessageMiddleware',
-#     # Uncomment the next line for simple clickjacking protection:
-#     # 'django.middleware.clickjacking.XFrameOptionsMiddleware',
-# )
+MIDDLEWARE_CLASSES = (
+    'django.contrib.sessions.middleware.SessionMiddleware',
+    'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'django.contrib.messages.middleware.MessageMiddleware',
+)
 
 ROOT_URLCONF = 'urls'
 

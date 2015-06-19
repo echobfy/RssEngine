@@ -37,7 +37,7 @@ def timelimit(timeout):
             if c.error:
                 tb = ''.join(traceback.format_exception(c.error[0], c.error[1], c.error[2]))
                 logging.debug(tb)
-                mail_admins('Error in timeout: %s' % c.error[0], tb)
+                #mail_admins('Error in timeout: %s' % c.error[0], tb)
                 raise c.error[0], c.error[1], c.error[2]
             return c.result
         return _2

@@ -1,49 +1,39 @@
 import difflib
 import datetime
-import time
 import random
 import re
-import math
-import mongoengine as mongo
 import zlib
 import hashlib
+import sys
+
+import mongoengine as mongo
 import redis
 import pymongo
-import sys
-from collections import defaultdict
-from operator import itemgetter
 from bson.objectid import ObjectId
 from BeautifulSoup import BeautifulSoup
 from django.db import models
 from django.db import IntegrityError
 from django.conf import settings
 from django.db.models.query import QuerySet
-from django.core.urlresolvers import reverse
-from django.contrib.sites.models import Site
 from django.template.defaultfilters import slugify
-from mongoengine.queryset import OperationError, Q, NotUniqueError
+from mongoengine.queryset import OperationError, Q
 from mongoengine.base import ValidationError
+import pytz
+
 from vendor.timezones.utilities import localtime_for_timezone
 from apps.rss_feeds.tasks import UpdateFeeds
 from apps.rss_feeds.text_importer import TextImporter
-from utils import feedfinder, feedparser
-from utils import urlnorm
+from utils import feedfinder
 from utils import log as logging
 from utils.feed_functions import levenshtein_distance
 from utils.feed_functions import timelimit, TimeoutError
 from utils.feed_functions import relative_timesince
 from utils.feed_functions import seconds_timesince
 from utils.story_functions import strip_tags, htmldiff, strip_comments, strip_comments__lxml
-import pytz
 from apps.search.models import SearchStory
-#from fdfs_client.client import Fdfs_client,DataError
-#from PIL import Image
+
 import cStringIO
 import urllib2
-import traceback
-from django.core.mail import mail_admins
-from utils.image_url_filters import IMAGE_BLACKLIST_FILTERS
-
 
 ENTRY_NEW, ENTRY_UPDATED, ENTRY_SAME, ENTRY_ERR = range(4)
 
@@ -379,14 +369,6 @@ class Feed(models.Model):
             return self.min_to_decay
 
         upd = self.stories_last_month / 30.0        # average stories each day.
-        # subs = (self.active_premium_subscribers +
-        #         ((self.active_subscribers - self.active_premium_subscribers) / 10.0))
-        # UPD = 1  Subs > 1:  t = 5         # 11625  * 1440/5 =       3348000
-        # UPD = 1  Subs = 1:  t = 60        # 17231  * 1440/60 =      413544
-        # UPD < 1  Subs > 1:  t = 60        # 37904  * 1440/60 =      909696
-        # UPD < 1  Subs = 1:  t = 60 * 12   # 143012 * 1440/(60*12) = 286024
-        # UPD = 0  Subs > 1:  t = 60 * 3    # 28351  * 1440/(60*3) =  226808
-        # UPD = 0  Subs = 1:  t = 60 * 24   # 807690 * 1440/(60*24) = 807690
 
         if upd >= 1:    
             total = 10
@@ -396,11 +378,6 @@ class Feed(models.Model):
             total = 60 * 6
             months_since_last_story = seconds_timesince(self.last_story_date) / (60 * 60 * 24 * 30)
             total *= max(1, months_since_last_story)
-
-        # if self.is_push:
-        #     fetch_history = MFetchHistory.feed(self.pk)
-        #     if len(fetch_history['push_history']):
-        #         total = total * 12
 
         # 3 day max
         total = min(total, 60 * 24 * 2)
@@ -1117,100 +1094,6 @@ class MStory(mongo.Document):
 
         return original_text
 
-
-class MFrozenStory(mongo.Document):
-
-    '''A feed item (Frozen)'''
-    story_feed_id = mongo.IntField()
-    story_date = mongo.DateTimeField()
-    story_title = mongo.StringField(max_length=1024)
-    story_content = mongo.StringField()
-    story_content_z = mongo.BinaryField()
-    original_text_z = mongo.BinaryField()
-    story_author_name = mongo.StringField()
-    story_permalink = mongo.StringField()
-    story_guid = mongo.StringField()
-    story_hash = mongo.StringField()
-    image_urls = mongo.ListField(mongo.StringField(max_length=1024))
-    # Add by Xinyan Lu : support images storage
-    image_ids = mongo.ListField(mongo.StringField())
-    story_tags = mongo.ListField(mongo.StringField(max_length=250))
-
-    meta = {
-        'collection': 'stories_frozen',
-        'indexes': [('story_feed_id', '-story_date'),
-                    {'fields': ['story_hash'],
-                     'unique': True,
-                     'types': False, }],
-        'index_drop_dups': True,
-        'ordering': ['-story_date'],
-        'allow_inheritance': False,
-        'cascade': False,
-    }
-
-    def __init__(self, mstory):
-        super(MFrozenStory,self).__init__()
-        if not isinstance(mstory,MStory):
-            raise TypeError('Not a MStory object')
-        if not mstory.id:
-            raise AssertionError('To move to new collection, an ObjectID is needed.')
-        self.story_feed_id = mstory.story_feed_id
-        self.story_date = mstory.story_date
-        self.story_title = mstory.story_title
-        self.story_content = mstory.story_content
-        self.story_content_z = mstory.story_content_z
-        self.original_text_z = mstory.original_text_z
-        self.story_author_name = mstory.story_author_name
-        self.story_permalink = mstory.story_permalink
-        self.story_guid = mstory.story_guid
-        self.story_hash = mstory.story_hash
-        self.image_urls = mstory.image_urls
-        self.image_ids = mstory.image_ids
-        self.story_tags = mstory.story_tags
-
-        # save with the same mongodb ObjectID
-        self.id = mstory.id
-
-
-    def save(self, *args, **kwargs):
-        # store original story_content, or it will be erased
-        story_content = self.story_content
-
-        if self.story_content:
-            self.story_content_z = zlib.compress(self.story_content)
-            self.story_content = None
-        # if self.story_title and len(self.story_title) > story_title_max:
-        #     self.story_title = self.story_title[:story_title_max]
-        super(MFrozenStory, self).save(*args, **kwargs)
-
-        #Add by Xinyan Lu : index on save
-        if not story_content and self.story_content_z:
-            try:
-                story_content = zlib.decompress(self.story_content_z)
-            except Exception,e:
-                story_content = ''
-                pass
-        index_content = story_content or ''
-        if self.original_text_z:
-            try:
-                original_text = zlib.decompress(self.original_text_z)
-            except Exception,e:
-                original_text = ''
-            if len(original_text) > 1.5 * len(index_content):
-                index_content = original_text
-
-        SearchStory.index(story_id=self.story_guid,
-                            story_title=self.story_title,
-                            story_content=index_content,
-                            story_author=self.story_author_name,
-                            story_date=self.story_date,
-                            db_id=str(self.id),
-                            frozen=True)
-
-        return self
-
-
-
 class MFetchHistory(mongo.Document):
 
     # for each feed_id, there is two fields.
@@ -1220,8 +1103,7 @@ class MFetchHistory(mongo.Document):
     page_fetch_history = mongo.DynamicField()
 
     meta = {
-        'db_alias': 'doctopus',
-        'collection': 'fetch_history',
+        'collection': 'fetchHistory',
         'allow_inheritance': False,
     }
 

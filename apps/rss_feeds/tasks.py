@@ -166,54 +166,7 @@ class UpdateFeeds(Task):
             #     mail_admins("Error in UpdateFeeds",str(e)+'\n'+traceback.format_exc())
 
 
-class UpdateFeedImages(Task):
-    name = 'update-feed-images'
-    max_retries = 0
-    ignore_result = False
 
-    def run(self,feed_pk,**kwargs):
-        from apps.rss_feeds.models import MStory
 
-        stories = MStory.objects(story_feed_id=feed_pk)
-        if len(stories): #is sort by story-data
-            for story in stories:
-                # start = time.time()
-                story.fetch_reference_images()
-                # num_valid_urls = 0
-                # for image_id in story.image_ids:
-                #     if len(image_id) > 20:
-                #         num_valid_urls +=1
-
-                # delta = time.time() - start
-                # logging.info('Process ~FY%d~FW[~FB%d~FW] urls in ~FG%.4s~FW seconds.' % (
-                #     num_valid_urls,len(story.image_urls),delta))
-        logging.info('---> ~FYProcess feed %d done!~FW'%feed_pk)
-
-class NewFeeds(Task):
-    name = 'new-feeds'
-    max_retries = 0
-    ignore_result = True
-
-    def run(self, feed_pks, **kwargs):
-        from apps.rss_feeds.models import Feed
-        if not isinstance(feed_pks, list):
-            feed_pks = [feed_pks]
-
-        options = {}
-        for feed_pk in feed_pks:
-            feed = Feed.get_by_id(feed_pk)
-            if not feed: continue
-            feed.update(options=options)
-        
-
-class FreezeFeeds(Task):
-    name = 'freeze-feeds'
-    max_retries = 0
-    ignore_result = False
-
-    def run(self, feed_pk, **kwargs):
-        from apps.rss_feeds.models import MStory
-        MStory.freeze_feed(feed_pk)
-        logging.info('---> ~FYProcess freeze feed %d done!~FW'%feed_pk)
 
 
